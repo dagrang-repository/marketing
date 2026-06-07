@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Marketing — Payment Foundation</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f6e56">
+<link rel="apple-touch-icon" href="/apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Marketing">
+<link rel="icon" type="image/png" href="/icon-192.png">
 <style>
   /* Pure: system fonts only — no web-font fetch, fully offline. */
 
@@ -87,6 +95,15 @@
   .note.warn{color:var(--warn); background:#faeeda; border-color:#f3dcb6}
   .note.warn b{color:var(--warn)}
   .note.good{background:#e7f5ee; border-color:#bfe3d0}
+  /* PWA install banner */
+  .pwa-banner{position:fixed; left:0; right:0; bottom:0; z-index:90; display:none; gap:12px; align-items:center;
+    max-width:480px; margin:0 auto; padding:12px 14px; background:var(--accent-ink); color:#fff;
+    box-shadow:0 -8px 30px -12px rgba(0,0,0,.4); font-size:13.5px; line-height:1.4}
+  .pwa-banner .pi{flex:1}
+  .pwa-banner .pi b{display:block; font-size:14px; margin-bottom:1px}
+  .pwa-banner button{font-family:inherit; cursor:pointer; border-radius:8px; border:none; padding:9px 13px; font-size:13px; font-weight:600}
+  .pwa-banner .pgo{background:#fff; color:var(--accent-ink)}
+  .pwa-banner .px{background:transparent; color:#cfe6dd; border:1px solid #3a6b5d; padding:9px 11px}
   .demo-banner{font-size:13px; color:var(--warn); background:#faeeda; border:1px solid #f3dcb6;
     border-radius:var(--r-sm); padding:9px 12px; margin:0 0 14px; display:flex; gap:8px; align-items:flex-start}
   .demo-banner button{margin-left:auto; background:none;border:none;color:var(--warn);cursor:pointer;font-size:15px;line-height:1;padding:0}
@@ -1195,6 +1212,7 @@ function workerLinks(w){
         <details class="qrwrap"><summary>Show QR</summary><div class="qrimg">${qrSvg(link)}</div></details>
         <div class="lkacts">
           <button class="btn sm" data-share="${escapeHtml(link)}" data-msg="${escapeHtml(shareMsg(l))}">Share</button>
+          <button class="btn sm ghost" data-copy="${escapeHtml(link)}">Copy</button>
           <a href="${encodeURI(link)}" target="_blank" rel="noopener">Open</a>
         </div>
       </div>
@@ -1355,6 +1373,7 @@ function wireWorker(){
     if(navigator.share){ navigator.share({ title:linkLabel({coded:url})||"Have a look", text, url }).catch(()=>{}); }
     else { copySvc(b.dataset.msg||url, b); } // no native share (e.g. desktop) -> copy the ready message
   });
+  document.querySelectorAll("[data-copy]").forEach(b=> b.onclick=()=> copySvc(b.dataset.copy, b));
   const rp=$("#reqPay"); if(rp) rp.onclick = async ()=>{ try{ await api("/me/payout-request","POST",{ on:true }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } };
   const bs=$("#bkSave"); if(bs) bs.onclick = async ()=>{
     bs.disabled=true; const lbl=bs.textContent; bs.textContent="Sending…";
@@ -1428,7 +1447,47 @@ window.addEventListener("resize", ()=>{
     catch(e){ TOKEN=""; ROLE=""; localStorage.removeItem("mf_token"); localStorage.removeItem("mf_role"); localStorage.removeItem("mf_email"); localStorage.removeItem("mf_name"); }
   }
   render();
+  pwaInit();
 })();
+
+/* PWA: register the service worker + show an install banner (re-shown each launch until installed) */
+function pwaInit(){
+  if("serviceWorker" in navigator){ navigator.serviceWorker.register("/sw.js").catch(()=>{}); }
+  const standalone = ()=> (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true;
+  if(standalone()) return; // already installed — nothing to show
+  const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  let deferred = null, dismissed = false;
+
+  function ensureBanner(){
+    let b = document.getElementById("pwaBanner");
+    if(b) return b;
+    b = document.createElement("div"); b.id="pwaBanner"; b.className="pwa-banner";
+    document.body.appendChild(b);
+    return b;
+  }
+  function close(){ dismissed=true; const b=document.getElementById("pwaBanner"); if(b) b.style.display="none"; }
+  function showAndroid(){
+    if(dismissed) return;
+    const b=ensureBanner();
+    b.innerHTML = `<div class="pi"><b>Install this app</b>Add Marketing to your home screen for one-tap access.</div>
+      <button class="pgo" id="pwaGo">Install</button><button class="px" id="pwaX">✕</button>`;
+    b.style.display="flex";
+    b.querySelector("#pwaX").onclick=close;
+    b.querySelector("#pwaGo").onclick=async ()=>{ if(!deferred) return; deferred.prompt(); try{ await deferred.userChoice; }catch(e){} deferred=null; close(); };
+  }
+  function showIOS(){
+    if(dismissed) return;
+    const b=ensureBanner();
+    b.innerHTML = `<div class="pi"><b>Install this app</b>Tap the Share icon, then “Add to Home Screen”.</div>
+      <button class="px" id="pwaX">✕</button>`;
+    b.style.display="flex";
+    b.querySelector("#pwaX").onclick=close;
+  }
+
+  window.addEventListener("beforeinstallprompt", (e)=>{ e.preventDefault(); deferred=e; showAndroid(); });
+  window.addEventListener("appinstalled", ()=> close());
+  if(isiOS) setTimeout(showIOS, 800); // Safari has no prompt event — show the manual hint
+}
 </script>
 </body>
 </html>

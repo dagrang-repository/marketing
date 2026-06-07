@@ -63,7 +63,7 @@ function cors() {
   return {
     "access-control-allow-origin": "*", // tighten to your index.html origin in production
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization,stripe-signature,x-veliane-secret,x-clickmagick-secret",
+    "access-control-allow-headers": "content-type,authorization,stripe-signature,x-veliane-secret,x-track-secret",
   };
 }
 
@@ -76,6 +76,26 @@ async function kvGet(env, k) { const v = await env.STORE.get(k); return v ? JSON
 async function kvPut(env, k, val, ttl) {
   const opt = ttl ? { expirationTtl: ttl } : undefined;
   await env.STORE.put(k, JSON.stringify(val), opt);
+}
+
+/* ---------- live FX rates (PHP base; cached ~24h; display-only) ----------
+   Source open.er-api.com (free, no key, 160+ currencies, base PHP).
+   On API failure: return last cached; if none, minimal {PHP:1} so the front shows pesos. */
+async function getFx(env) {
+  const KEY = "fx:rates", MAX_AGE = 24 * 3600 * 1000;
+  let cached = null;
+  try { cached = await kvGet(env, KEY); } catch (e) {}
+  if (cached && cached.ts && (Date.now() - cached.ts) < MAX_AGE && cached.rates) return cached;
+  try {
+    const r = await fetch("https://open.er-api.com/v6/latest/PHP", { cf: { cacheTtl: 3600 } });
+    const d = await r.json();
+    if (d && d.result === "success" && d.rates) {
+      const fresh = { ts: Date.now(), base: "PHP", rates: d.rates };
+      try { await kvPut(env, KEY, fresh); } catch (e) {}
+      return fresh;
+    }
+  } catch (e) {}
+  return cached || { ts: 0, base: "PHP", rates: { PHP: 1 } };
 }
 async function kvDel(env, k) { await env.STORE.delete(k); }
 
@@ -170,6 +190,37 @@ async function addUniqueClicks(env, w, clicks) {
   return w;
 }
 
+/* ---------- city-cluster key from a coarse geo {country,region,city} ---------- */
+function clusterKey(geo) {
+  if (!geo) return null;
+  const c  = String(geo.country || geo.c  || "").trim();
+  const r  = String(geo.region  || geo.r  || "").trim();
+  const ci = String(geo.city    || geo.ci || "").trim();
+  const key = [c, r, ci].filter(Boolean).join("|").toLowerCase();
+  return key || null;
+}
+
+/* ---------- count one dust click + city-cluster warn/ban (city-level only) ----------
+   Concentration in ONE city (link not spreading) -> WARN/BAN. A promoter spread across
+   many cities keeps each city's tally low and is never flagged. Cost of abuse is dust
+   (clicks = ₱1 per 3); thresholds are lenient + tunable via CLUSTER_WARN / CLUSTER_BAN.
+   Geo is coarse (city centroid): owned sites forward the visitor's geo in the body; the
+   /go redirector reads it from request.cf. No geo present -> still counts, just unflagged. */
+async function countDust(env, w, geo) {
+  if (w.banned) return w;                       // banned earns nothing, no tally
+  const key = clusterKey(geo);
+  if (key) {
+    w.geo = w.geo || {};
+    w.geo[key] = (w.geo[key] || 0) + 1;
+    const WARN = parseInt(env.CLUSTER_WARN || "2000", 10);
+    const BAN  = parseInt(env.CLUSTER_BAN  || "4000", 10);
+    if (w.geo[key] >= BAN) { w.banned = true; await saveWorker(env, w); return w; }
+    if (w.geo[key] >= WARN) w.warned = true;
+  }
+  await addUniqueClicks(env, w, 1);             // saves w (geo + warned included)
+  return w;
+}
+
 /* ============================================================ router ============================================================ */
 export default {
   async fetch(req, env) {
@@ -178,13 +229,28 @@ export default {
     const p = url.pathname.replace(/\/+$/, "");
 
     try {
-      /* ---- auth: request code ---- */
+      /* ---- auth: request code (rate-limited per email + per IP, hourly buckets) ---- */
       if (p === "/auth/request" && req.method === "POST") {
         const { email } = await req.json();
         if (!email) return json({ error: "email required" }, 400);
         const isAdmin = email.toLowerCase() === (env.ADMIN_EMAIL || "").toLowerCase();
         const w = await workerByEmail(env, email);
         if (!isAdmin && !w) return json({ error: "not_registered" }, 403);
+
+        // hourly buckets auto-expire; defaults 7/email, 15/IP per hour (override via env)
+        const EMAIL_MAX = parseInt(env.RL_EMAIL_PER_HOUR || "7", 10);
+        const IP_MAX    = parseInt(env.RL_IP_PER_HOUR    || "15", 10);
+        const ip   = req.headers.get("cf-connecting-ip") || "0";
+        const slot = Math.floor(Date.now() / 3600000); // changes every hour
+        const emKey = "rl:em:" + email.toLowerCase() + ":" + slot;
+        const ipKey = "rl:ip:" + ip + ":" + slot;
+        const emN = parseInt((await env.STORE.get(emKey)) || "0", 10);
+        const ipN = parseInt((await env.STORE.get(ipKey)) || "0", 10);
+        if (emN >= EMAIL_MAX) return json({ error: "rate_limited", scope: "email", message: "Too many code requests for this email. Please wait up to an hour, then try again." }, 429);
+        if (ipN >= IP_MAX)    return json({ error: "rate_limited", scope: "ip",    message: "Too many code requests from this connection. Please wait up to an hour, then try again." }, 429);
+        await env.STORE.put(emKey, String(emN + 1), { expirationTtl: 3700 });
+        await env.STORE.put(ipKey, String(ipN + 1), { expirationTtl: 3700 });
+
         const code = genCode();
         await kvPut(env, "code:" + email.toLowerCase(), { code, role: isAdmin ? "admin" : "worker", workerId: w ? w.id : null }, CODE_TTL_SEC);
         await sendEmail(env, email, "Your sign-in code", `Your code is ${code}. It expires in 10 minutes.`);
@@ -223,16 +289,20 @@ export default {
         const sorted = all.sort((a, b) => (b.balance - a.balance) || ((b.confirmed||0) - (a.confirmed||0)));
         const rank = sorted.findIndex((x) => x.id === w.id) + 1;
         const payments = ((await kvGet(env, "payments")) || []).filter((x) => x.workerId === w.id).sort((a, b) => b.ts - a.ts);
-        const sites = await getSites(env);
-        const myLinks = (await getLinks(env)).filter((l) => l.workerId === w.id)
-          .map((l) => ({ site: (sites.find((s2) => s2.id === l.siteId) || {}).name || "Link", coded: l.coded }));
+        const myLinks = (await getLinks(env)).filter((l) => l.workerId === w.id);
+        const notice = (await kvGet(env, "notice")) || "";
         return json({
+          id: w.id, code: w.code,
           name: w.name, currency: w.currency || "PHP",
           balance: w.balance || 0, pending: w.pending || 0,
           confirmed: w.confirmed || 0, clickPts: w.clickPts || 0,
           paidTotal: w.paidTotal || 0, rank, total: all.length,
           banned: !!w.banned, warned: !!w.warned, payoutReq: !!w.payoutReq,
+          note: w.note || "", notice,
+          phone: w.phone || "", photo: w.photo || "",
+          bank: w.bank || null, bankStatus: w.bankStatus || "",
           links: myLinks, payments,
+          fx: await getFx(env),
         });
       }
 
@@ -247,6 +317,31 @@ export default {
         return json({ ok: true, payoutReq: w.payoutReq });
       }
 
+      /* ---- worker: set own display currency ---- */
+      if (p === "/me/currency" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "worker") return json({ error: "unauthorized" }, 401);
+        const { currency } = await req.json();
+        const w = await kvGet(env, "worker:" + s.workerId);
+        if (!w) return json({ error: "not_found" }, 404);
+        w.currency = String(currency || "PHP"); await saveWorker(env, w);
+        return json({ ok: true, currency: w.currency });
+      }
+
+      /* ---- worker: submit bank/RIB details (locks until admin reopens) ---- */
+      if (p === "/me/bank" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "worker") return json({ error: "unauthorized" }, 401);
+        const w = await kvGet(env, "worker:" + s.workerId);
+        if (!w) return json({ error: "not_found" }, 404);
+        if (w.bankStatus === "submitted") return json({ error: "locked", message: "Your details are submitted. Ask the admin to reopen them if you need a change." }, 423);
+        const b = await req.json();
+        w.bank = { holder:String(b.holder||""), country:String(b.country||""), method:String(b.method||""), details:String(b.details||""), notes:String(b.notes||"") };
+        w.bankStatus = "submitted";
+        await saveWorker(env, w);
+        return json({ ok: true, bankStatus: w.bankStatus });
+      }
+
       /* ---- admin: list workers ---- */
       if (p === "/workers" && req.method === "GET") {
         const s = await requireSession(env, req);
@@ -256,18 +351,39 @@ export default {
         return json({ workers: all.map(({ payout, ...pub }) => ({ ...pub, hasPayout: !!payout })) });
       }
 
+      /* ---- admin: one-shot board state (workers + notice + default currency + sites + links + payments) ---- */
+      if (p === "/admin/state" && req.method === "GET") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const all = await listWorkers(env);
+        all.sort((a, b) => (b.balance - a.balance) || ((b.confirmed||0) - (a.confirmed||0)));
+        const workers = all.map(({ payout, ...pub }) => ({ ...pub }));
+        const cfg = (await kvGet(env, "config")) || {};
+        return json({
+          workers,
+          notice: (await kvGet(env, "notice")) || "",
+          defaultCurrency: cfg.currency || "PHP",
+          sites: await getSites(env),
+          links: await getLinks(env),
+          payments: (await kvGet(env, "payments")) || [],
+          fx: await getFx(env),
+        });
+      }
+
       /* ---- admin: add worker ---- */
       if (p === "/workers" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { name, email, code, payout, currency } = await req.json();
+        const { name, email, code, payout, currency, phone, photo } = await req.json();
         if (!name || !email) return json({ error: "name+email required" }, 400);
         if (await workerByEmail(env, email)) return json({ error: "email_exists" }, 409);
         const gate = (code || name).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "W";
         if (await workerByGate(env, gate)) return json({ error: "gate_taken" }, 409);
-        const w = { id: rid("w_"), name, email, code: gate, payout: payout || "", currency: currency || "PHP",
+        const cfg = (await kvGet(env, "config")) || {};
+        const w = { id: rid("w_"), name, email, code: gate, payout: payout || "", currency: currency || cfg.currency || "PHP",
+          phone: phone || "", photo: photo || "", bank: null, bankStatus: "",
           confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
-          banned: false, warned: false, payoutReq: false };
+          note: "", banned: false, warned: false, payoutReq: false };
         await saveWorker(env, w);
         return json({ ok: true, id: w.id, code: gate });
       }
@@ -276,13 +392,95 @@ export default {
       if (p === "/worker/flag" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { workerId, banned, warned } = await req.json();
+        const { workerId, banned, warned, payoutReq } = await req.json();
         const w = await kvGet(env, "worker:" + workerId);
         if (!w) return json({ error: "no_worker" }, 404);
         if (typeof banned === "boolean") { w.banned = banned; if (banned) w.warned = false; }
         if (typeof warned === "boolean") w.warned = warned;
+        if (typeof payoutReq === "boolean") w.payoutReq = payoutReq;
         await saveWorker(env, w);
-        return json({ ok: true, banned: !!w.banned, warned: !!w.warned });
+        return json({ ok: true, banned: !!w.banned, warned: !!w.warned, payoutReq: !!w.payoutReq });
+      }
+
+      /* ---- admin: set a worker's private note ---- */
+      if (p === "/worker/note" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId, note } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        w.note = String(note || ""); await saveWorker(env, w);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: reopen a worker's bank details for editing ("send back") ---- */
+      if (p === "/worker/bank-reopen" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        w.bankStatus = "editing"; // keeps existing values; worker can edit + resend
+        await saveWorker(env, w);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: set / replace / clear a worker's ID photo (admin-injected) ---- */
+      if (p === "/worker/photo" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId, photo } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        w.photo = String(photo || "");
+        await saveWorker(env, w);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: set a worker's phone (optional) ---- */
+      if (p === "/worker/phone" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId, phone } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        w.phone = String(phone || "");
+        await saveWorker(env, w);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: remove a worker (payments are kept for the log) ---- */
+      if (p === "/worker/remove" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        await kvDel(env, "worker:" + workerId);
+        const idx = ((await kvGet(env, "idx:workers")) || []).filter((x) => x !== workerId);
+        await kvPut(env, "idx:workers", idx);
+        await kvPut(env, "links", (await getLinks(env)).filter((l) => l.workerId !== workerId));
+        return json({ ok: true });
+      }
+
+      /* ---- admin: global notice shown to every worker ("" clears it) ---- */
+      if (p === "/notice" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { text } = await req.json();
+        await kvPut(env, "notice", String(text || ""));
+        return json({ ok: true });
+      }
+
+      /* ---- admin: default currency for new workers ---- */
+      if (p === "/config/currency" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { currency } = await req.json();
+        const cfg = (await kvGet(env, "config")) || {};
+        cfg.currency = String(currency || "PHP");
+        await kvPut(env, "config", cfg);
+        return json({ ok: true, currency: cfg.currency });
       }
 
       /* ---- admin: sites + referral links ---- */
@@ -294,10 +492,10 @@ export default {
       if (p === "/sites" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { name, baseUrl } = await req.json();
+        const { name, url, owned } = await req.json();
         if (!name) return json({ error: "name required" }, 400);
         const sites = await getSites(env);
-        sites.push({ id: rid("st_"), name, baseUrl: baseUrl || "" });
+        sites.push({ id: rid("st_"), name, url: url || "", owned: !!owned, ts: now() });
         await kvPut(env, "sites", sites);
         return json({ ok: true });
       }
@@ -312,20 +510,44 @@ export default {
       if (p === "/links" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { siteId, workerId, coded, endResult } = await req.json();
-        if (!siteId || !workerId || !coded) return json({ error: "siteId+workerId+coded required" }, 400);
+        const b = await req.json();
+        const workerId = b.workerId, coded = b.coded;
+        if (!workerId || !coded) return json({ error: "workerId+coded required" }, 400);
+        const source = b.source || "";
+        const siteId = b.siteId || null;
+        const baseUrl = b.baseUrl || "";
         const links = await getLinks(env);
-        const ex = links.find((l) => l.siteId === siteId && l.workerId === workerId);
-        if (ex) { ex.coded = coded; ex.endResult = endResult || ""; }
-        else links.push({ id: rid("lk_"), siteId, workerId, coded, endResult: endResult || "" });
+        const ex = links.find((l) => l.workerId === workerId && (l.source || "") === source && ((siteId && l.siteId === siteId) || l.baseUrl === baseUrl));
+        if (ex) {
+          ex.baseUrl = baseUrl; ex.owned = !!b.owned; ex.label = b.label || ex.label || "";
+          ex.coded = coded; ex.title = b.title || ""; ex.desc = b.desc || "";
+          ex.source = source; ex.siteId = siteId || ex.siteId || null;
+          ex.status = ex.status || "active"; ex.ts = now();
+          await kvPut(env, "links", links);
+          return json({ ok: true, id: ex.id });
+        }
+        const id = rid("lk_");
+        links.push({ id, workerId, siteId, baseUrl, owned: !!b.owned, label: b.label || "", coded,
+          title: b.title || "", desc: b.desc || "", source, status: "active", ts: now() });
         await kvPut(env, "links", links);
-        return json({ ok: true });
+        return json({ ok: true, id });
       }
       if (p === "/links/remove" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
         const { id } = await req.json();
         await kvPut(env, "links", (await getLinks(env)).filter((l) => l.id !== id));
+        return json({ ok: true });
+      }
+      if (p === "/links/status" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { id, status } = await req.json();
+        const links = await getLinks(env);
+        const l = links.find((x) => x.id === id);
+        if (!l) return json({ error: "no_link" }, 404);
+        l.status = status || "active";
+        await kvPut(env, "links", links);
         return json({ ok: true });
       }
 
@@ -446,24 +668,22 @@ export default {
            unique = "1" for a real unique click (the tracker filters bots)
            id     = a unique click/event id for idempotency
            coords = reserved for the future GEO-SPREAD fraud check (200 m rule) */
-      if (p === "/clickmagick/event" && req.method === "POST") {
-        if ((req.headers.get("x-clickmagick-secret") || "") !== (env.CLICKMAGICK_SECRET || "___"))
+      /* ---- generic intake for your own in-house tracker (clicks + conversions) ---- */
+      if (p === "/track/event" && req.method === "POST") {
+        if ((req.headers.get("x-track-secret") || "") !== (env.TRACK_SECRET || env.VELIANE_SECRET || "___"))
           return json({ error: "unauthorized" }, 401);
         const body = await req.json();
         const gate = body.gate, id = body.id;
         const event = String(body.event || "click");
         const unique = body.unique === true || body.unique === "1" || body.unique === 1;
-        if (await seen(env, "cm:" + id)) return json({ ok: true, dup: true });
+        if (await seen(env, "tk:" + id)) return json({ ok: true, dup: true });
         const w = await workerByGate(env, gate);
         if (!w) return json({ error: "no_gate" }, 404);
         if (event === "conversion") {
           await creditWorker(env, w, RESULT_VALUE, "result");
         } else if (event === "click" && unique) {
-          // FRAUD DETECTION (GEO-SPREAD) — STUB. Built with the in-house click
-          // method: concentration inside one ~200 m radius (link not spreading)
-          // -> WARN 150 / BAN 300. Needs per-click geo-coordinates, not yet
-          // available, so no auto warn/ban fires here. Spread = always legit.
-          await addUniqueClicks(env, w, 1);
+          const geo = body.geo || { country: body.country, region: body.region, city: body.city };
+          await countDust(env, w, geo);
         }
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
@@ -481,11 +701,34 @@ export default {
         if (await seen(env, "oc:" + id)) return json({ ok: true, dup: true });
         const w = await workerByGate(env, gate);
         if (!w) return json({ error: "no_gate" }, 404);
-        // FRAUD DETECTION (GEO-SPREAD) — STUB. Built with the in-house click
-        // method: concentration inside one ~200 m radius -> WARN 150 / BAN 300.
-        // Needs per-click geo-coordinates, not yet available, so nothing fires here.
-        await addUniqueClicks(env, w, 1);
+        // visitor geo forwarded by the site (optional); enables city-cluster warn/ban
+        const geo = body.geo || { country: body.country, region: body.region, city: body.city };
+        await countDust(env, w, geo);
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
+      }
+
+      /* ---- non-owned redirector: yoursite link /go/CODE?u=<dest> counts a dust click
+             (visitor geo from request.cf for city-cluster) then forwards to <dest> ---- */
+      if (p.startsWith("/go/") && req.method === "GET") {
+        const code = decodeURIComponent(p.slice(4)).trim().slice(0, 64);
+        const dest = url.searchParams.get("u") || "";
+        const ua = req.headers.get("user-agent") || "";
+        const isBot = /bot|crawl|spider|slurp|preview|facebookexternalhit|whatsapp|telegram|embed|monitor/i.test(ua);
+        if (code && !isBot) {
+          const ip = req.headers.get("cf-connecting-ip") || "na";
+          const day = new Date().toISOString().slice(0, 10);
+          if (!(await seen(env, "go:" + code + ":" + ip + ":" + day))) {
+            const w = await workerByGate(env, code);
+            if (w) {
+              const cf = req.cf || {};
+              await countDust(env, w, { country: cf.country, region: cf.region, city: cf.city });
+            }
+          }
+        }
+        let target = "";
+        try { target = new URL(dest).toString(); }
+        catch (e) { if (dest) target = "https://" + dest.replace(/^https?:\/\//i, ""); }
+        return Response.redirect(target || "https://example.com/", 302);
       }
 
       return json({ error: "not_found", path: p }, 404);
