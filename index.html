@@ -242,6 +242,10 @@
   .payfields{flex:1; min-width:220px}
   .wexp-pay{display:flex; gap:10px; align-items:flex-start; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line)}
   .wexp-paymeta{font-size:12.5px; min-width:0}
+  .wexp-sec{margin-top:10px; padding-top:10px; border-top:1px dashed var(--line)}
+  .wexp-inline{display:flex; gap:8px; align-items:center}
+  .wexp-inline input{flex:1; min-width:0}
+  .wexp-actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px}
   .wexp-email{font-weight:600; word-break:break-all}
   .mut{color:var(--ink-soft)}
   .nwphoto{display:flex; align-items:center; gap:10px}
@@ -939,29 +943,33 @@ function workerExpand(w){
       <div><span>Paid total</span><b>${money(w.paidTotal||0,wc)}</b></div>
     </div>
     ${tags?`<div class="wexp-tags">${tags}</div>`:''}
-    <div class="wexp-pay">
+    <div class="wexp-sec">
       <div class="wexp-lh">Payment details ${bankBadge}</div>
-      <div class="wexp-paymeta">
+      <div class="wexp-paymeta" style="word-break:break-word">
         ${ hasBank
           ? `<div><b>${escapeHtml(b.holder||'')}</b>${b.country?' · '+escapeHtml(b.country):''}</div>
              <div class="mut">${escapeHtml(b.method||'')}${b.details?' · '+escapeHtml(b.details):''}</div>
              ${b.notes?`<div class="mut">${escapeHtml(b.notes)}</div>`:''}`
           : `<div class="mut">No payment details submitted yet.</div>` }
       </div>
-      ${ w.bankStatus==="submitted" ? `<button class="btn ghost sm" data-bankreopen="${w.id}">Send back to edit</button>`
-        : w.bankStatus==="editing" ? `<div class="mut" style="font-size:12px">Reopened — waiting for the worker to resend.</div>` : '' }
+      ${ w.bankStatus==="submitted" ? `<div class="wexp-actions"><button class="btn ghost sm" data-bankreopen="${w.id}">Send back to edit</button></div>`
+        : w.bankStatus==="editing" ? `<div class="mut" style="font-size:12px;margin-top:6px">Reopened — waiting for the worker to resend.</div>` : '' }
     </div>
-    <div class="wexp-pay">
+    <div class="wexp-sec">
       <div class="wexp-lh">Phone</div>
-      <div class="row">
-        <div class="field" style="flex:1"><input id="ph-${w.id}" value="${escapeHtml(w.phone||'')}" placeholder="+63 917… (optional)" autocomplete="off"></div>
+      <div class="wexp-inline">
+        <input id="ph-${w.id}" value="${escapeHtml(w.phone||'')}" placeholder="+63 917… (optional)" autocomplete="off">
         <button class="btn ghost sm" data-phone="${w.id}">Save</button>
       </div>
-      <div class="wexp-lh">ID photo <span class="opt">(you set it; they only view)</span></div>
-      <label class="btn ghost sm filelbl">${w.photo?'Replace photo':'Set photo'}<input type="file" accept="image/*" data-photo="${w.id}"></label>
-      ${w.photo?`<button class="btn ghost sm" data-photoclear="${w.id}">Remove photo</button>`:''}
     </div>
-    <div class="wexp-links"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
+    <div class="wexp-sec">
+      <div class="wexp-lh">ID photo <span class="opt">(you set it; they only view)</span></div>
+      <div class="wexp-actions">
+        <label class="btn ghost sm filelbl">${w.photo?'Replace photo':'Set photo'}<input type="file" accept="image/*" data-photo="${w.id}"></label>
+        ${w.photo?`<button class="btn ghost sm" data-photoclear="${w.id}">Remove photo</button>`:''}
+      </div>
+    </div>
+    <div class="wexp-sec"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
   </div>`;
 }
 function adminWorkers(){
