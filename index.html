@@ -1306,6 +1306,9 @@ function viewWorker(){
       <div class="stat"><div class="n">#${r}</div><div class="k">Rank</div></div>
     </div>
   </div>
+  ${personalNoteHtml(w)}
+  ${noticeWorkerHtml()}
+  ${workerLinks(w)}
   <div class="card">
     <h2>What you earn &mdash; focus here</h2>
     <div class="sub">Two ways to earn. One is worth far more &mdash; spend your hours there.</div>
@@ -1323,7 +1326,6 @@ function viewWorker(){
     <div class="note good"><b>Best practice &mdash; target where people buy.</b> Aim your links at the <b>USA, Canada, Europe, the UK, and Australia</b>, where visitors make real purchases. Those turn into ${money(RESULT_VALUE,wc)} results and your points climb fast. Pushing clicks only in your own area earns little dust &mdash; and piling clicks from one place can eventually get you flagged.</div>
     <div class="note warn">If we detect excessive repeated clicks from the same location, you may get banned. Bring real, different people &mdash; not the same connection over and over.</div>
   </div>
-  ${workerLinks(w)}
   <div class="card">
     <h2>Payment status</h2>
     <div class="sub">${ w.balance>0 ? 'You have a balance waiting to be paid.' : lastPaid ? 'All settled. Last payment shown below.' : 'No balance yet — your earnings will show here.' }</div>
@@ -1334,10 +1336,6 @@ function viewWorker(){
     </div>
   </div>
   ${workerPayCard(w)}
-  ${personalNoteHtml(w)}
-  ${noticeWorkerHtml()}
-  <div class="foot fline">Sign-ups and purchases pay the most; clicks add only dust.<br>Transfers arrive by Wise after the admin settles.</div>
-  <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${money(BAR_FULL,wc)} steps as your bar fills.</p>
   <div class="card sim">
     <h2>Earning simulation</h2>
     <div class="sub">A sandbox to feel how each action pays &mdash; and which is fastest. It doesn't touch your real balance.</div>
@@ -1360,6 +1358,8 @@ function viewWorker(){
     </div>
     <button class="btn ghost sim-reset" id="simReset">Reset</button>
   </div>
+  <div class="foot fline">Sign-ups and purchases pay the most; clicks add only dust.<br>Transfers arrive by Wise after the admin settles.</div>
+  <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${money(BAR_FULL,wc)} steps as your bar fills.</p>
   <div class="stamp" aria-hidden="true">
     <div><span class="stamp-top" id="stampTop">A French Company</span></div>
     <div><span class="stamp-bot" id="stampBot">Paris · FRANCE</span></div>
