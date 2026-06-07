@@ -353,7 +353,7 @@ async function api(path, method="GET", body){
   if(TOKEN) headers.authorization = "Bearer " + TOKEN;
   const res = await fetch(API + path, { method, headers, body: (body!=null ? JSON.stringify(body) : undefined) });
   let data = null; try{ data = await res.json(); }catch(e){}
-  if(!res.ok){ throw new Error((data && data.error) || ("http_" + res.status)); }
+  if(!res.ok){ const err = new Error((data && data.error) || ("http_" + res.status)); err.info = data || {}; throw err; }
   return data || {};
 }
 
@@ -495,7 +495,9 @@ function wireLogin(){
       $("#step1").classList.add("hide"); $("#step2").classList.remove("hide"); $("#loginCode").focus();
     }catch(e){
       sc.disabled=false; sc.textContent="Send code";
-      alert(e.message==="not_registered" ? "That email isn't the admin or a registered worker. Add the worker first from the command board." : ("Couldn't send the code: "+e.message));
+      if(e.message==="not_registered"){ alert("That email isn't the admin or a registered worker. Add the worker first from the command board."); }
+      else if(e.message==="rate_limited"){ alert((e.info && e.info.message) || "Too many code requests. Please wait up to an hour, then try again."); }
+      else { alert("Couldn't send the code: "+e.message); }
     }
   };
   const back=$("#backStep"); if(back) back.onclick=()=>{ pendingEmail=null; $("#step2").classList.add("hide"); $("#step1").classList.remove("hide"); $("#loginCode").value=""; };
