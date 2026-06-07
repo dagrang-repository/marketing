@@ -376,7 +376,8 @@ async function hydrate(){
     const self = { id:me.id, code:me.code, name:me.name, email:EMAIL || me.email || "",
       currency:me.currency, balance:me.balance, pending:me.pending, confirmed:me.confirmed,
       clickPts:me.clickPts, paidTotal:me.paidTotal, banned:me.banned, warned:me.warned,
-      payoutReq:me.payoutReq, note:me.note || "" };
+      payoutReq:me.payoutReq, note:me.note || "",
+      phone:me.phone || "", photo:me.photo || "", bank:me.bank || null, bankStatus:me.bankStatus || "" };
     DB.workers  = [self];
     DB.links    = me.links || [];
     DB.payments = me.payments || [];
@@ -920,6 +921,10 @@ function workerExpand(w){
     (!w.banned&&w.warned)?'<span class="wtag warn">warned</span>':'',
     w.payoutReq?'<span class="wtag req">payout requested</span>':''
   ].filter(Boolean).join("");
+  const b=w.bank||{};
+  const hasBank = w.bank && (b.holder||b.details||b.method);
+  const bankBadge = w.bankStatus==="submitted" ? '<span class="wtag req">submitted</span>'
+    : w.bankStatus==="editing" ? '<span class="wtag warn">with worker to edit</span>' : '';
   return `<div class="wexp">
     <div class="wexp-id">
       ${w.photo?`<img src="${w.photo}" class="idthumb sm" alt="ID photo">`:`<div class="idthumb sm ph"></div>`}
@@ -935,9 +940,26 @@ function workerExpand(w){
     </div>
     ${tags?`<div class="wexp-tags">${tags}</div>`:''}
     <div class="wexp-pay">
+      <div class="wexp-lh">Payment details ${bankBadge}</div>
       <div class="wexp-paymeta">
-        <div class="mut">Payment details — added in a later secure update.</div>
+        ${ hasBank
+          ? `<div><b>${escapeHtml(b.holder||'')}</b>${b.country?' · '+escapeHtml(b.country):''}</div>
+             <div class="mut">${escapeHtml(b.method||'')}${b.details?' · '+escapeHtml(b.details):''}</div>
+             ${b.notes?`<div class="mut">${escapeHtml(b.notes)}</div>`:''}`
+          : `<div class="mut">No payment details submitted yet.</div>` }
       </div>
+      ${ w.bankStatus==="submitted" ? `<button class="btn ghost sm" data-bankreopen="${w.id}">Send back to edit</button>`
+        : w.bankStatus==="editing" ? `<div class="mut" style="font-size:12px">Reopened — waiting for the worker to resend.</div>` : '' }
+    </div>
+    <div class="wexp-pay">
+      <div class="wexp-lh">Phone</div>
+      <div class="row">
+        <div class="field" style="flex:1"><input id="ph-${w.id}" value="${escapeHtml(w.phone||'')}" placeholder="+63 917… (optional)" autocomplete="off"></div>
+        <button class="btn ghost sm" data-phone="${w.id}">Save</button>
+      </div>
+      <div class="wexp-lh">ID photo <span class="opt">(you set it; they only view)</span></div>
+      <label class="btn ghost sm filelbl">${w.photo?'Replace photo':'Set photo'}<input type="file" accept="image/*" data-photo="${w.id}"></label>
+      ${w.photo?`<button class="btn ghost sm" data-photoclear="${w.id}">Remove photo</button>`:''}
     </div>
     <div class="wexp-links"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
   </div>`;
@@ -972,7 +994,15 @@ function adminWorkers(){
     <div class="sub">Email is their login. The gate code ties their results back to them.</div>
     <div class="field"><label class="fl">Name</label><input id="nwName" placeholder="Carlos Gonzales"></div>
     <div class="field"><label class="fl">Email (their login)</label><input id="nwEmail" type="email" placeholder="carlos@email.com" autocomplete="off"></div>
+    <div class="field"><label class="fl">Phone <span class="opt">(optional — add later if you don't have it)</span></label><input id="nwPhone" placeholder="+63 917…" autocomplete="off"></div>
     <div class="field"><label class="fl">Currency (their market)</label><select id="nwCcy">${ccyOptions(DB.config.currency)}</select></div>
+    <div class="field"><label class="fl">ID photo <span class="opt">(optional — you set this; they only view it. Can add later)</span></label>
+      <div class="nwphoto">
+        <img id="nwPhotoPrev" class="idthumb sm" alt="" style="display:none">
+        <div class="idthumb sm ph" id="nwPhotoPh"></div>
+        <label class="btn ghost sm filelbl">Choose photo<input type="file" id="nwPhoto" accept="image/*"></label>
+      </div>
+    </div>
     <div class="row">
       <div class="field"><label class="fl">Gate code</label><input id="nwCode" class="mono" placeholder="AUTO"></div>
       <div class="field"><label class="fl">Payout note</label><input id="nwPay" placeholder="GCash 0917…"></div>
@@ -1026,18 +1056,23 @@ function wireAdmin(){
   document.querySelectorAll(".seg button").forEach(btn=> btn.onclick=()=>{ adminTab=btn.dataset.tab; render(); });
   document.querySelectorAll("[data-expand]").forEach(el=> el.onclick=()=>{ const id=el.dataset.expand; expandedW = (expandedW===id?null:id); render(); });
 
+  // Add-worker ID photo: resize + stage
+  const npp=$("#nwPhoto"); if(npp) npp.onchange=()=>{ const f=npp.files&&npp.files[0]; if(!f) return; resizePhoto(f,(durl)=>{ newPhoto=durl; const pv=$("#nwPhotoPrev"), ph=$("#nwPhotoPh"); if(pv){ pv.src=durl; pv.style.display=""; } if(ph) ph.style.display="none"; }); };
+
   // Add worker
   const add=$("#addWorker");
   if(add) add.onclick = async ()=>{
     const name=$("#nwName").value.trim(), email=$("#nwEmail").value.trim();
     let code=$("#nwCode").value.trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
     const pay=$("#nwPay").value.trim();
+    const phone=$("#nwPhone")?$("#nwPhone").value.trim():"";
     const ccy=$("#nwCcy")?$("#nwCcy").value:DB.config.currency;
     if(!name){ $("#nwName").focus(); return; }
     if(!/.+@.+\..+/.test(email)){ $("#nwEmail").focus(); return; }
     add.disabled=true; const lbl=add.textContent; add.textContent="Adding…";
     try{
-      await api("/workers","POST",{ name, email, code:code||undefined, payout:pay, currency:ccy });
+      await api("/workers","POST",{ name, email, code:code||undefined, payout:pay, currency:ccy, phone, photo:newPhoto||"" });
+      newPhoto=null;
       await refresh();
     }catch(e){
       add.disabled=false; add.textContent=lbl;
@@ -1087,6 +1122,12 @@ function wireAdmin(){
   document.querySelectorAll("[data-ban]").forEach(b=> b.onclick = async ()=>{ const w=workerById(b.dataset.ban); if(!w) return; try{ await api("/worker/flag","POST",{ workerId:w.id, banned:!w.banned }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
   document.querySelectorAll("[data-warn]").forEach(b=> b.onclick = async ()=>{ const w=workerById(b.dataset.warn); if(!w) return; try{ await api("/worker/flag","POST",{ workerId:w.id, warned:!w.warned }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
   document.querySelectorAll("[data-clrreq]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/flag","POST",{ workerId:b.dataset.clrreq, payoutReq:false }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
+
+  // Worker-card: bank send-back, phone, ID photo (admin-set)
+  document.querySelectorAll("[data-bankreopen]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/bank-reopen","POST",{ workerId:b.dataset.bankreopen }); await refresh(); }catch(e){ alert("Couldn't reopen: "+e.message); } });
+  document.querySelectorAll("[data-phone]").forEach(b=> b.onclick = async ()=>{ const id=b.dataset.phone; const v=($("#ph-"+id)||{}).value||""; b.disabled=true; const lbl=b.textContent; b.textContent="…"; try{ await api("/worker/phone","POST",{ workerId:id, phone:v.trim() }); await refresh(); }catch(e){ b.disabled=false; b.textContent=lbl; alert("Couldn't save phone: "+e.message); } });
+  document.querySelectorAll("[data-photo]").forEach(inp=> inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return; const id=inp.dataset.photo; resizePhoto(f, async (durl)=>{ try{ await api("/worker/photo","POST",{ workerId:id, photo:durl }); await refresh(); }catch(e){ alert("Couldn't set photo: "+e.message); } }); });
+  document.querySelectorAll("[data-photoclear]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/photo","POST",{ workerId:b.dataset.photoclear, photo:"" }); await refresh(); }catch(e){ alert("Couldn't remove photo: "+e.message); } });
 }
 function payWorker(id, btn){
   const w=workerById(id); if(!w || w.balance<=0) return;
@@ -1133,9 +1174,32 @@ function resizePhoto(file, cb){
   rd.readAsDataURL(file);
 }
 function workerPayCard(w){
+  const b=w.bank||{};
+  const submitted = w.bankStatus==="submitted";
+  if(submitted){
+    return `<div class="card">
+      <h2>Payment details <span class="wtag req">submitted</span></h2>
+      <div class="sub">The admin has your details. If something needs changing, ask the admin to reopen them.</div>
+      <div class="wexp-paymeta">
+        <div><b>${escapeHtml(b.holder||'')}</b>${b.country?' · '+escapeHtml(b.country):''}</div>
+        <div class="mut">${escapeHtml(b.method||'')}${b.details?' · '+escapeHtml(b.details):''}</div>
+        ${b.notes?`<div class="mut">${escapeHtml(b.notes)}</div>`:''}
+      </div>
+    </div>`;
+  }
+  const reopened = w.bankStatus==="editing";
   return `<div class="card">
     <h2>Payment details</h2>
-    <div class="sub">Coming in a secure update — you'll add your bank / payout info here (encrypted). The admin will then see it to prepare your Wise payout.</div>
+    <div class="sub">Fill these so the admin can send your payout. A bank/RIB here only ever <b>receives</b> money.</div>
+    ${reopened?`<div class="note warn">The admin reopened your details — please re-check and resend.</div>`:''}
+    <div class="payfields">
+      <div class="field"><label class="fl">Full name (as on bank / ID)</label><input id="bkName" value="${escapeHtml(b.holder||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Country</label><input id="bkCountry" value="${escapeHtml(b.country||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Payout method</label><input id="bkMethod" value="${escapeHtml(b.method||'')}" placeholder="Wise / bank / GCash / PayPal / RIB" autocomplete="off"></div>
+      <div class="field"><label class="fl">Account / IBAN / RIB / email</label><input id="bkDetails" value="${escapeHtml(b.details||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Notes (optional)</label><input id="bkNotes" value="${escapeHtml(b.notes||'')}" autocomplete="off"></div>
+      <button class="btn" id="bkSave">${reopened?'Resend details':'Send details'}</button>
+    </div>
   </div>`;
 }
 /* ---------------- WORKER ---------------- */
@@ -1249,6 +1313,13 @@ function wireWorker(){
     else { copySvc(b.dataset.msg||url, b); } // no native share (e.g. desktop) -> copy the ready message
   });
   const rp=$("#reqPay"); if(rp) rp.onclick = async ()=>{ try{ await api("/me/payout-request","POST",{ on:true }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } };
+  const bs=$("#bkSave"); if(bs) bs.onclick = async ()=>{
+    bs.disabled=true; const lbl=bs.textContent; bs.textContent="Sending…";
+    try{
+      await api("/me/bank","POST",{ holder:$("#bkName").value.trim(), country:$("#bkCountry").value.trim(), method:$("#bkMethod").value.trim(), details:$("#bkDetails").value.trim(), notes:$("#bkNotes").value.trim() });
+      await refresh();
+    }catch(e){ bs.disabled=false; bs.textContent=lbl; alert((e.info&&e.info.message)||("Couldn't send: "+e.message)); }
+  };
   const hp=$("#holdPay"); if(hp) hp.onclick = async ()=>{ try{ await api("/me/payout-request","POST",{ on:false }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } };
 
   // Earning simulation (sandbox — does NOT touch the real balance)
