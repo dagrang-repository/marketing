@@ -342,12 +342,50 @@ const RESULT_TYPES = {
 
 /* ---- services (who the worker is working for) — admin-managed, shown on worker page ---- */
 /* ---------- store ---------- */
-function load(){
-  try{ const d = JSON.parse(localStorage.getItem(KEY)); if(d&&d.workers) return d; }catch(e){}
-  return { config:{ adminEmail:"" }, workers:[], results:[], payments:[], sites:[], links:[], session:null, bannerDismissed:false };
+/* ---- backend wiring (data lives in the Cloudflare Worker, not the browser) ---- */
+const API = "https://marketing-foundation.dagrang.workers.dev";
+let TOKEN = localStorage.getItem("mf_token") || "";
+let ROLE  = localStorage.getItem("mf_role")  || "";
+let EMAIL = localStorage.getItem("mf_email") || "";
+
+async function api(path, method="GET", body){
+  const headers = { "content-type":"application/json" };
+  if(TOKEN) headers.authorization = "Bearer " + TOKEN;
+  const res = await fetch(API + path, { method, headers, body: (body!=null ? JSON.stringify(body) : undefined) });
+  let data = null; try{ data = await res.json(); }catch(e){}
+  if(!res.ok){ throw new Error((data && data.error) || ("http_" + res.status)); }
+  return data || {};
 }
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){ alert("Couldn't save — device storage is full. Try a smaller photo, or remove old data."); } }
-let DB = load();
+
+/* in-memory cache, hydrated from the Worker; never persisted to localStorage */
+let DB = { config:{ currency:"PHP" }, workers:[], payments:[], sites:[], links:[], notice:"", session:null, meRank:0, meTotal:0 };
+function save(){ /* no-op: the Worker is the source of truth */ }
+
+async function hydrate(){
+  if(ROLE === "admin"){
+    const st = await api("/admin/state");
+    DB.workers = st.workers || [];
+    DB.notice  = st.notice  || "";
+    DB.config.currency = st.defaultCurrency || "PHP";
+    DB.sites    = st.sites    || [];
+    DB.links    = st.links    || [];
+    DB.payments = st.payments || [];
+    DB.session  = { role:"admin", email:EMAIL, workerId:null };
+  } else {
+    const me = await api("/me");
+    const self = { id:me.id, code:me.code, name:me.name, email:EMAIL || me.email || "",
+      currency:me.currency, balance:me.balance, pending:me.pending, confirmed:me.confirmed,
+      clickPts:me.clickPts, paidTotal:me.paidTotal, banned:me.banned, warned:me.warned,
+      payoutReq:me.payoutReq, note:me.note || "" };
+    DB.workers  = [self];
+    DB.links    = me.links || [];
+    DB.payments = me.payments || [];
+    DB.notice   = me.notice || "";
+    DB.meRank   = me.rank || 1; DB.meTotal = me.total || 1;
+    DB.session  = { role:"worker", workerId:self.id, email:self.email };
+  }
+}
+async function refresh(){ await hydrate(); render(); }
 
 /* ---------- helpers ---------- */
 const $ = (s,el=document)=>el.querySelector(s);
@@ -370,7 +408,7 @@ function ranked(){
 function rankOf(id){ return ranked().findIndex(w=>w.id===id)+1; }
 
 /* ---------- transient auth state (not persisted) ---------- */
-let pending = null; // { email, code, role, workerId }
+let pendingEmail = null; // email awaiting code verification
 let lastGenId = null; // highlights the link just generated
 let genNote = ""; // feedback after a mass generate
 let expandedW = null; // which admin worker card is open
@@ -399,10 +437,12 @@ function currencyPicker(){
 }
 function wireCcy(){
   const p=$("#ccyPick"); if(!p) return;
-  p.onchange=()=>{
-    if(p.dataset.scope==="admin"){ DB.config.currency=p.value; }
-    else { const w=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(w) w.currency=p.value; }
-    save(); render();
+  p.onchange = async ()=>{
+    try{
+      if(p.dataset.scope==="admin"){ await api("/config/currency","POST",{ currency:p.value }); }
+      else { await api("/me/currency","POST",{ currency:p.value }); }
+      await refresh();
+    }catch(e){ alert("Couldn't change currency: "+e.message); }
   };
 }
 function topBar(roleLabel, nameLabel){
@@ -417,71 +457,63 @@ function topBar(roleLabel, nameLabel){
   </header>`;
 }
 
-function demoBanner(){
-  if(DB.bannerDismissed) return "";
-  return `<div class="demo-banner">
-    <span>Local preview — data lives in this browser only. Codes are shown on screen instead of emailed. Wire <b>worker.js</b> for real multi-device use.</span>
-    <button id="dismissBanner" aria-label="Dismiss">×</button>
-  </div>`;
-}
+function demoBanner(){ return ""; }
 
 /* ---------------- LOGIN ---------------- */
 function viewLogin(){
-  const needSetup = !DB.config.adminEmail;
   return `${topBar("","")}
-  ${demoBanner()}
-  ${ needSetup ? `
-    <div class="card">
-      <h2>First, set the admin</h2>
-      <div class="sub">This email is the command board. Anyone logging in with it gets the admin view; everyone else gets their own worker view.</div>
-      <div class="field"><label class="fl">Admin email</label>
-        <input id="adminEmail" type="email" placeholder="you@email.com" autocomplete="off"></div>
-      <button class="btn" id="saveAdmin">Set admin email</button>
-    </div>` : `
-    <div class="card" id="loginCard">
-      <h2>Sign in</h2>
-      <div class="sub">Enter your email. A 6-character code will confirm it.</div>
-      <div id="step1">
-        <div class="field"><label class="fl">Email</label>
-          <input id="loginEmail" type="email" placeholder="you@email.com" autocomplete="off"></div>
-        <button class="btn" id="sendCode">Send code</button>
-      </div>
-      <div id="step2" class="hide">
-        <div class="code-reveal" id="codeShown"></div>
-        <div class="code-hint">In production this arrives by email. Enter it below.</div>
-        <div class="field"><label class="fl">Code</label>
-          <input id="loginCode" class="mono" maxlength="6" placeholder="------" autocomplete="off"></div>
-        <button class="btn" id="verifyCode">Verify &amp; enter</button>
-        <div style="height:8px"></div>
-        <button class="btn ghost" id="backStep">Use a different email</button>
-      </div>
+  <div class="card" id="loginCard">
+    <h2>Sign in</h2>
+    <div class="sub">Enter your email. A 6-character code will be emailed to confirm it.</div>
+    <div id="step1">
+      <div class="field"><label class="fl">Email</label>
+        <input id="loginEmail" type="email" placeholder="you@email.com" autocomplete="off"></div>
+      <button class="btn" id="sendCode">Send code</button>
     </div>
-    <div class="note">Real money comes from <b>verified results</b> — purchases, paid actions, active members. Clicks earn only dust.</div>
-  `}
+    <div id="step2" class="hide">
+      <div class="code-hint">We emailed a 6-character code to <b id="sentTo"></b>. Enter it below.</div>
+      <div class="field"><label class="fl">Code</label>
+        <input id="loginCode" class="mono" maxlength="6" placeholder="------" autocomplete="off"></div>
+      <button class="btn" id="verifyCode">Verify &amp; enter</button>
+      <div style="height:8px"></div>
+      <button class="btn ghost" id="backStep">Use a different email</button>
+    </div>
+  </div>
+  <div class="note">Real money comes from <b>verified results</b> — purchases, paid actions, active members. Clicks earn only dust.</div>
   <div class="foot">Marketing · payment & attribution foundation</div>`;
 }
 function wireLogin(){
-  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
-  const sa=$("#saveAdmin");
-  if(sa){ sa.onclick=()=>{ const v=$("#adminEmail").value.trim(); if(!/.+@.+\..+/.test(v)){ $("#adminEmail").focus(); return; }
-    DB.config.adminEmail=v; save(); render(); }; return; }
-
-  $("#sendCode").onclick=()=>{
+  const sc=$("#sendCode");
+  if(sc) sc.onclick = async ()=>{
     const email=$("#loginEmail").value.trim();
     if(!/.+@.+\..+/.test(email)){ $("#loginEmail").focus(); return; }
-    const isAdmin = email.toLowerCase()===DB.config.adminEmail.toLowerCase();
-    const w = workerByEmail(email);
-    if(!isAdmin && !w){ alert("That email isn't the admin or a registered worker. Add the worker first from the command board."); return; }
-    pending = { email, code:genCode(), role:isAdmin?"admin":"worker", workerId:w?w.id:null };
-    $("#step1").classList.add("hide"); $("#step2").classList.remove("hide");
-    $("#codeShown").textContent = pending.code; $("#loginCode").focus();
+    sc.disabled=true; sc.textContent="Sending…";
+    try{
+      await api("/auth/request","POST",{ email });
+      pendingEmail = email;
+      const st=$("#sentTo"); if(st) st.textContent=email;
+      $("#step1").classList.add("hide"); $("#step2").classList.remove("hide"); $("#loginCode").focus();
+    }catch(e){
+      sc.disabled=false; sc.textContent="Send code";
+      alert(e.message==="not_registered" ? "That email isn't the admin or a registered worker. Add the worker first from the command board." : ("Couldn't send the code: "+e.message));
+    }
   };
-  const back=$("#backStep"); if(back) back.onclick=()=>{ pending=null; $("#step2").classList.add("hide"); $("#step1").classList.remove("hide"); $("#loginCode").value=""; };
-  const vc=$("#verifyCode"); if(vc) vc.onclick=()=>{
-    if(!pending) return;
-    if(($("#loginCode").value||"").trim().toUpperCase()!==pending.code){ alert("Code doesn't match."); return; }
-    DB.session={ email:pending.email, role:pending.role, workerId:pending.workerId };
-    pending=null; save(); render();
+  const back=$("#backStep"); if(back) back.onclick=()=>{ pendingEmail=null; $("#step2").classList.add("hide"); $("#step1").classList.remove("hide"); $("#loginCode").value=""; };
+  const vc=$("#verifyCode"); if(vc) vc.onclick = async ()=>{
+    const code=($("#loginCode").value||"").trim();
+    if(!code){ $("#loginCode").focus(); return; }
+    vc.disabled=true; vc.textContent="Checking…";
+    try{
+      const r = await api("/auth/verify","POST",{ email:pendingEmail, code });
+      TOKEN=r.token; ROLE=r.role; EMAIL=pendingEmail;
+      localStorage.setItem("mf_token",TOKEN); localStorage.setItem("mf_role",ROLE); localStorage.setItem("mf_email",EMAIL);
+      if(r.name) localStorage.setItem("mf_name",r.name);
+      pendingEmail=null;
+      await refresh();
+    }catch(e){
+      vc.disabled=false; vc.textContent="Verify & enter";
+      alert(e.message==="bad_code" ? "Code doesn't match (or it expired — codes last 10 minutes)." : ("Couldn't verify: "+e.message));
+    }
   };
 }
 
@@ -499,16 +531,15 @@ function adminNotice(){
 }
 function wireNotice(){
   const sv=$("#saveNotice");
-  if(sv) sv.onclick=()=>{ DB.notice=($("#noticeText").value||"").trim(); save(); render(); };
+  if(sv) sv.onclick = async ()=>{ try{ await api("/notice","POST",{ text:($("#noticeText").value||"").trim() }); await refresh(); }catch(e){ alert("Couldn't save the message: "+e.message); } };
   const cl=$("#clearNotice");
-  if(cl) cl.onclick=()=>{ DB.notice=""; save(); render(); };
-  // per-worker private note
+  if(cl) cl.onclick = async ()=>{ try{ await api("/notice","POST",{ text:"" }); await refresh(); }catch(e){ alert("Couldn't clear the message: "+e.message); } };
   const sel=$("#pwSel");
   if(sel) sel.onchange=()=>{ const w=workerById(sel.value); const ta=$("#pwText"); if(ta) ta.value = w?(w.note||""):""; };
   const sp=$("#savePw");
-  if(sp) sp.onclick=()=>{ const w=workerById($("#pwSel").value); if(!w) return; w.note=($("#pwText").value||"").trim(); save(); render(); };
+  if(sp) sp.onclick = async ()=>{ const id=$("#pwSel").value; if(!id) return; try{ await api("/worker/note","POST",{ workerId:id, note:($("#pwText").value||"").trim() }); await refresh(); }catch(e){ alert("Couldn't save the note: "+e.message); } };
   const cp=$("#clearPw");
-  if(cp) cp.onclick=()=>{ const w=workerById($("#pwSel").value); if(!w) return; w.note=""; save(); render(); };
+  if(cp) cp.onclick = async ()=>{ const id=$("#pwSel").value; if(!id) return; try{ await api("/worker/note","POST",{ workerId:id, note:"" }); await refresh(); }catch(e){ alert("Couldn't clear the note: "+e.message); } };
 }
 function noticeWorkerHtml(){
   const v = DB.notice || "";
@@ -794,39 +825,33 @@ function adminLinks(){
     ${ groups ? `<div class="divider"></div>${groups}` : (DB.workers.length?`<div class="empty sm">No links yet — generate above.</div>`:"") }
   </div>`;
 }
-function makeLink(w, base, owned, title, desc, siteId, source){
+function buildLinkPayload(w, base, owned, title, desc, siteId, source){
   const src=srcTag(source); const coded=buildTrackingLink(base, w.code, owned, src), label=deriveLabel(base);
-  DB.links=DB.links||[];
-  const ex=DB.links.find(l=> l.workerId===w.id && (l.source||"")===src && ((siteId&&l.siteId===siteId) || l.baseUrl===base));
-  if(ex){ ex.baseUrl=base; ex.owned=owned; ex.label=label; ex.coded=coded; ex.title=title; ex.desc=desc; ex.source=src; ex.siteId=siteId||ex.siteId||null; if(!ex.status) ex.status='active'; ex.ts=now(); return ex.id; }
-  const id="lk_"+now().toString(36)+Math.floor(Math.random()*1e3);
-  DB.links.push({ id, workerId:w.id, siteId:siteId||null, baseUrl:base, owned:!!owned, label, coded, title, desc, source:src, status:'active', ts:now() });
-  return id;
+  return { workerId:w.id, siteId:siteId||null, baseUrl:base, owned:!!owned, label, coded, title, desc, source:src };
 }
 function wireLinks(){
   // sites registry
   const addS=$("#addSite");
-  if(addS) addS.onclick=()=>{
+  if(addS) addS.onclick = async ()=>{
     const name=$("#stName").value.trim(); let url=$("#stUrl").value.trim();
     if(!name){ $("#stName").focus(); return; }
     if(!url){ $("#stUrl").focus(); return; }
     if(!/^https?:\/\//i.test(url)) url="https://"+url;
-    DB.sites=DB.sites||[]; DB.sites.push({ id:"st_"+now().toString(36)+Math.floor(Math.random()*1e3), name, url, owned:$("#stOwned").checked, ts:now() });
-    save(); render();
+    try{ await api("/sites","POST",{ name, url, owned:$("#stOwned").checked }); await refresh(); }catch(e){ alert("Couldn't add the site: "+e.message); }
   };
-  document.querySelectorAll("[data-sitrm]").forEach(b=> b.onclick=()=>{ DB.sites=(DB.sites||[]).filter(s=>s.id!==b.dataset.sitrm); save(); render(); });
+  document.querySelectorAll("[data-sitrm]").forEach(b=> b.onclick = async ()=>{ try{ await api("/sites/remove","POST",{ id:b.dataset.sitrm }); await refresh(); }catch(e){ alert("Couldn't remove the site: "+e.message); } });
 
   // site picker -> prefill URL + title, toggle the paste field
   const gs=$("#genSite");
   const syncSite=()=>{ const s=siteById(gs.value); const pf=$("#pasteField"), tb=$("#lkBase"), tt=$("#lkTitle");
     if(s){ if(pf) pf.style.display="none"; if(tb) tb.value=s.url; if(tt && !tt.value.trim()) tt.value=s.name; }
-    else { if(pf) pf.style.display=""; if(tb && tb.readOnly===false){} }
+    else { if(pf) pf.style.display=""; }
   };
   if(gs){ gs.onchange=syncSite; syncSite(); }
 
   // generate (one worker or all)
   const gen=$("#genLink");
-  if(gen) gen.onclick=()=>{
+  if(gen) gen.onclick = async ()=>{
     const s = gs ? siteById(gs.value) : null;
     const base = s ? s.url : $("#lkBase").value.trim();
     const owned = s ? !!s.owned : false;
@@ -836,19 +861,23 @@ function wireLinks(){
     const desc=($("#lkDesc")&&$("#lkDesc").value.trim())||"";
     const source=($("#lkSource")&&$("#lkSource").value.trim())||"";
     const wid=$("#lkWorker").value;
-    if(wid==="ALL"){
-      if(!DB.workers.length) return;
-      DB.workers.forEach(w=> makeLink(w, base, owned, title, desc, siteId, source));
-      lastGenId=null; genNote=`Made ${title||deriveLabel(base)}${srcTag(source)?' ('+srcTag(source)+')':''} links for ${DB.workers.length} worker${DB.workers.length>1?'s':''} — each has it on their page.`;
-    } else {
-      const w=workerById(wid); if(!w) return;
-      lastGenId=makeLink(w, base, owned, title, desc, siteId, source); genNote="";
-    }
-    save(); render();
+    gen.disabled=true; const lbl=gen.textContent; gen.textContent="Generating…";
+    try{
+      if(wid==="ALL"){
+        if(!DB.workers.length){ gen.disabled=false; gen.textContent=lbl; return; }
+        for(const w of DB.workers){ await api("/links","POST", buildLinkPayload(w, base, owned, title, desc, siteId, source)); }
+        lastGenId=null; genNote=`Made ${title||deriveLabel(base)}${srcTag(source)?' ('+srcTag(source)+')':''} links for ${DB.workers.length} worker${DB.workers.length>1?'s':''} — each has it on their page.`;
+      } else {
+        const w=workerById(wid); if(!w){ gen.disabled=false; gen.textContent=lbl; return; }
+        const r = await api("/links","POST", buildLinkPayload(w, base, owned, title, desc, siteId, source));
+        lastGenId=r.id||null; genNote="";
+      }
+      await refresh();
+    }catch(e){ gen.disabled=false; gen.textContent=lbl; alert("Couldn't generate the link: "+e.message); }
   };
 
-  document.querySelectorAll("[data-lkstatus]").forEach(b=> b.onclick=()=>{ const [id,st]=b.dataset.lkstatus.split(":"); const l=(DB.links||[]).find(x=>x.id===id); if(l){ l.status=st; save(); render(); } });
-  document.querySelectorAll("[data-lkrm]").forEach(b=> b.onclick=()=>{ DB.links=(DB.links||[]).filter(l=>l.id!==b.dataset.lkrm); if(b.dataset.lkrm===lastGenId) lastGenId=null; save(); render(); });
+  document.querySelectorAll("[data-lkstatus]").forEach(b=> b.onclick = async ()=>{ const [id,st]=b.dataset.lkstatus.split(":"); try{ await api("/links/status","POST",{ id, status:st }); await refresh(); }catch(e){ alert("Couldn't update the link: "+e.message); } });
+  document.querySelectorAll("[data-lkrm]").forEach(b=> b.onclick = async ()=>{ try{ await api("/links/remove","POST",{ id:b.dataset.lkrm }); if(b.dataset.lkrm===lastGenId) lastGenId=null; await refresh(); }catch(e){ alert("Couldn't remove the link: "+e.message); } });
   document.querySelectorAll("[data-copy]").forEach(b=> b.onclick=()=> copySvc(b.dataset.copy, b));
 }
 function adminFoot(){
@@ -905,11 +934,7 @@ function workerExpand(w){
     ${tags?`<div class="wexp-tags">${tags}</div>`:''}
     <div class="wexp-pay">
       <div class="wexp-paymeta">
-        ${ w.bank&&(w.bank.holder||w.bank.details||w.bank.method)
-          ? `<div>${escapeHtml(w.bank.holder||'')}${w.bank.country?' · '+escapeHtml(w.bank.country):''}</div>
-             <div class="mut">${escapeHtml(w.bank.method||'')}${w.bank.details?' · '+escapeHtml(w.bank.details):''}</div>
-             ${w.bank.notes?`<div class="mut">${escapeHtml(w.bank.notes)}</div>`:''}`
-          : `<div class="mut">No payment details submitted yet</div>` }
+        <div class="mut">Payment details — added in a later secure update.</div>
       </div>
     </div>
     <div class="wexp-links"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
@@ -946,13 +971,6 @@ function adminWorkers(){
     <div class="field"><label class="fl">Name</label><input id="nwName" placeholder="Carlos Gonzales"></div>
     <div class="field"><label class="fl">Email (their login)</label><input id="nwEmail" type="email" placeholder="carlos@email.com" autocomplete="off"></div>
     <div class="field"><label class="fl">Currency (their market)</label><select id="nwCcy">${ccyOptions(DB.config.currency)}</select></div>
-    <div class="field"><label class="fl">ID photo <span class="opt">(at first contact — they'll see it on their page)</span></label>
-      <div class="nwphoto">
-        <img id="nwPhotoPrev" class="idthumb sm" alt="" style="display:none">
-        <div class="idthumb sm ph" id="nwPhotoPh"></div>
-        <label class="btn ghost sm filelbl">Choose photo<input type="file" id="nwPhoto" accept="image/*"></label>
-      </div>
-    </div>
     <div class="row">
       <div class="field"><label class="fl">Gate code</label><input id="nwCode" class="mono" placeholder="AUTO"></div>
       <div class="field"><label class="fl">Payout note</label><input id="nwPay" placeholder="GCash 0917…"></div>
@@ -1003,39 +1021,39 @@ function wireAdmin(){
   wireCcy();
   wireLinks();
   wireNotice();
-  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
   document.querySelectorAll(".seg button").forEach(btn=> btn.onclick=()=>{ adminTab=btn.dataset.tab; render(); });
   document.querySelectorAll("[data-expand]").forEach(el=> el.onclick=()=>{ const id=el.dataset.expand; expandedW = (expandedW===id?null:id); render(); });
 
-  // Add worker (present in workers section / left column)
-  const npp=$("#nwPhoto"); if(npp) npp.onchange=()=>{ const f=npp.files&&npp.files[0]; if(!f) return; resizePhoto(f,(durl)=>{ newPhoto=durl; const pv=$("#nwPhotoPrev"), ph=$("#nwPhotoPh"); if(pv){ pv.src=durl; pv.style.display=""; } if(ph) ph.style.display="none"; }); };
+  // Add worker
   const add=$("#addWorker");
-  if(add) add.onclick=()=>{
+  if(add) add.onclick = async ()=>{
     const name=$("#nwName").value.trim(), email=$("#nwEmail").value.trim();
     let code=$("#nwCode").value.trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
     const pay=$("#nwPay").value.trim();
     const ccy=$("#nwCcy")?$("#nwCcy").value:DB.config.currency;
     if(!name){ $("#nwName").focus(); return; }
     if(!/.+@.+\..+/.test(email)){ $("#nwEmail").focus(); return; }
-    if(workerByEmail(email)){ alert("A worker with that email already exists."); return; }
-    if(!code) code=suggestGate(name);
-    if(DB.workers.some(w=>w.code===code)){ alert("That gate code is taken — pick another."); return; }
-    DB.workers.push({ id:"w_"+now().toString(36)+Math.floor(Math.random()*1e3), name, email, code, payout:pay, currency:ccy, photo:newPhoto||"", confirmed:0, balance:0, paidTotal:0, pending:0, clickCarry:0, clickPts:0 });
-    newPhoto=null; save(); render();
+    add.disabled=true; const lbl=add.textContent; add.textContent="Adding…";
+    try{
+      await api("/workers","POST",{ name, email, code:code||undefined, payout:pay, currency:ccy });
+      await refresh();
+    }catch(e){
+      add.disabled=false; add.textContent=lbl;
+      alert(e.message==="email_exists" ? "A worker with that email already exists." : e.message==="gate_taken" ? "That gate code is taken — pick another." : ("Couldn't add the worker: "+e.message));
+    }
   };
 
-  // Pay buttons (present wherever the worker list is)
+  // Pay buttons
   document.querySelectorAll("[data-pay]").forEach(btn=> btn.onclick=()=> payWorker(btn.dataset.pay, btn));
 
   // Remove worker (payment history is kept)
-  document.querySelectorAll("[data-rmw]").forEach(btn=> btn.onclick=()=>{
+  document.querySelectorAll("[data-rmw]").forEach(btn=> btn.onclick = async ()=>{
     const w=workerById(btn.dataset.rmw); if(!w) return;
     if(!confirm(`Remove ${w.name} from the dashboard?\n\nTheir record and current balance are deleted. Any past payments stay in the payment log.`)) return;
-    DB.workers = DB.workers.filter(x=>x.id!==w.id);
-    save(); render();
+    try{ await api("/worker/remove","POST",{ workerId:w.id }); await refresh(); }catch(e){ alert("Couldn't remove the worker: "+e.message); }
   });
 
-  // Inject (present in inject section / right column)
+  // Inject (the Worker computes dust carry + banking)
   const t=$("#inT");
   const syncReason=()=>{
     if(!t) return;
@@ -1051,38 +1069,32 @@ function wireAdmin(){
   const inW=$("#inW"); if(inW) inW.onchange=syncReason;
   syncReason();
   const di=$("#doInject");
-  if(di) di.onclick=()=>{
-    const w=workerById($("#inW").value); if(!w) return;
-    const v=$("#inT").value;
+  if(di) di.onclick = async ()=>{
+    const wid=$("#inW").value; const v=$("#inT").value;
+    let body;
     if(v==="clicks"){
       const clicks=Math.max(0, Math.floor(Number($("#inClicks").value)));
       if(!clicks){ $("#inClicks").focus(); return; }
-      const carry=(w.clickCarry||0)+clicks;
-      const pts=Math.floor(carry/CLICKS_PER_POINT);
-      w.clickCarry = carry % CLICKS_PER_POINT;
-      if(pts>0){ creditWorker(w, pts, "click"); w.clickPts=(w.clickPts||0)+pts; DB.results.push({ workerId:w.id, type:"click", points:pts, clicks, ts:now() }); }
-    } else {
-      creditWorker(w, RESULT_VALUE, "result");
-      DB.results.push({ workerId:w.id, type:v, points:RESULT_VALUE, ts:now() });
-    }
-    save(); adminTab="workers"; render();
+      body={ workerId:wid, type:"clicks", clicks };
+    } else { body={ workerId:wid, type:v }; }
+    di.disabled=true; const lbl=di.textContent; di.textContent="Adding…";
+    try{ await api("/inject","POST",body); adminTab="workers"; await refresh(); }catch(e){ di.disabled=false; di.textContent=lbl; alert("Couldn't add: "+e.message); }
   };
 
   // Warn / ban toggles + clear a payout request
-  document.querySelectorAll("[data-ban]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.ban); if(w){ w.banned=!w.banned; if(w.banned) w.warned=false; save(); render(); } });
-  document.querySelectorAll("[data-warn]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.warn); if(w){ w.warned=!w.warned; save(); render(); } });
-  document.querySelectorAll("[data-clrreq]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.clrreq); if(w){ w.payoutReq=false; save(); render(); } });
+  document.querySelectorAll("[data-ban]").forEach(b=> b.onclick = async ()=>{ const w=workerById(b.dataset.ban); if(!w) return; try{ await api("/worker/flag","POST",{ workerId:w.id, banned:!w.banned }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
+  document.querySelectorAll("[data-warn]").forEach(b=> b.onclick = async ()=>{ const w=workerById(b.dataset.warn); if(!w) return; try{ await api("/worker/flag","POST",{ workerId:w.id, warned:!w.warned }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
+  document.querySelectorAll("[data-clrreq]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/flag","POST",{ workerId:b.dataset.clrreq, payoutReq:false }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } });
 }
 function payWorker(id, btn){
   const w=workerById(id); if(!w || w.balance<=0) return;
   const amount=w.balance;
-  DB.payments.push({ workerId:id, amount, ts:now() });
-  w.paidTotal=(w.paidTotal||0)+amount; w.balance=0; w.payoutReq=false;
-  save();
-  // transient PAID flash, then re-render
-  const balEl=$("#bal-"+id); if(balEl) balEl.outerHTML='<div class="paidflash">PAID '+money(amount, wcur(w))+'</div>';
-  if(btn){ btn.disabled=true; btn.textContent="Sent"; }
-  setTimeout(render, 1100);
+  if(btn){ btn.disabled=true; btn.textContent="Sending…"; }
+  api("/pay","POST",{ workerId:id }).then(()=>{
+    const balEl=$("#bal-"+id); if(balEl) balEl.outerHTML='<div class="paidflash">PAID '+money(amount, wcur(w))+'</div>';
+    if(btn){ btn.textContent="Sent"; }
+    setTimeout(refresh, 1100);
+  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Pay"; } alert("Couldn't record the payment: "+e.message); });
 }
 
 function workerLinks(w){
@@ -1119,25 +1131,16 @@ function resizePhoto(file, cb){
   rd.readAsDataURL(file);
 }
 function workerPayCard(w){
-  const b=w.bank||{};
   return `<div class="card">
     <h2>Payment details</h2>
-    <div class="sub">Fill these so the admin can prepare your payout in advance. Only the admin sees them.</div>
-    <div class="payfields">
-      <div class="field"><label class="fl">Full name (as on bank / ID)</label><input id="bkName" value="${escapeHtml(b.holder||'')}" autocomplete="off"></div>
-      <div class="field"><label class="fl">Country</label><input id="bkCountry" value="${escapeHtml(b.country||'')}" autocomplete="off"></div>
-      <div class="field"><label class="fl">Payout method</label><input id="bkMethod" value="${escapeHtml(b.method||'')}" placeholder="Wise / bank / GCash / PayPal" autocomplete="off"></div>
-      <div class="field"><label class="fl">Account / email / IBAN</label><input id="bkDetails" value="${escapeHtml(b.details||'')}" autocomplete="off"></div>
-      <div class="field"><label class="fl">Notes (optional)</label><input id="bkNotes" value="${escapeHtml(b.notes||'')}" autocomplete="off"></div>
-      <button class="btn" id="bkSave">Save details</button>
-    </div>
+    <div class="sub">Coming in a secure update — you'll add your bank / payout info here (encrypted). The admin will then see it to prepare your Wise payout.</div>
   </div>`;
 }
 /* ---------------- WORKER ---------------- */
 function viewWorker(){
   const w = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
   if(!w){ return `${topBar("Worker","")}<div class="card"><div class="empty">Your record was removed. Contact the admin.</div></div>`; }
-  const r = rankOf(w.id); const total=DB.workers.length; const wc = wcur(w); const sym = ccySym(wc);
+  const r = DB.meRank||1; const total=DB.meTotal||1; const wc = wcur(w); const sym = ccySym(wc);
   const pending = w.pending||0;
   const pct = Math.round((pending / BAR_FULL) * 100);
   const myPayments=[...DB.payments].filter(p=>p.workerId===w.id).sort((a,b)=>b.ts-a.ts);
@@ -1243,11 +1246,8 @@ function wireWorker(){
     if(navigator.share){ navigator.share({ title:linkLabel({coded:url})||"Have a look", text, url }).catch(()=>{}); }
     else { copySvc(b.dataset.msg||url, b); } // no native share (e.g. desktop) -> copy the ready message
   });
-  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
-  const rp=$("#reqPay"); if(rp) rp.onclick=()=>{ const ww=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(ww){ ww.payoutReq=true; save(); render(); } };
-  const hp=$("#holdPay"); if(hp) hp.onclick=()=>{ const ww=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(ww){ ww.payoutReq=false; save(); render(); } };
-  const me=()=> workerById(DB.session.workerId)||workerByEmail(DB.session.email);
-  const bs=$("#bkSave"); if(bs) bs.onclick=()=>{ const ww=me(); if(!ww) return; ww.bank={ holder:$("#bkName").value.trim(), country:$("#bkCountry").value.trim(), method:$("#bkMethod").value.trim(), details:$("#bkDetails").value.trim(), notes:$("#bkNotes").value.trim() }; save(); const t=bs.textContent; bs.textContent="Saved"; setTimeout(()=>{ bs.textContent=t; },1100); };
+  const rp=$("#reqPay"); if(rp) rp.onclick = async ()=>{ try{ await api("/me/payout-request","POST",{ on:true }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } };
+  const hp=$("#holdPay"); if(hp) hp.onclick = async ()=>{ try{ await api("/me/payout-request","POST",{ on:false }); await refresh(); }catch(e){ alert("Couldn't update: "+e.message); } };
 
   // Earning simulation (sandbox — does NOT touch the real balance)
   if($("#simBuy")){
@@ -1286,16 +1286,18 @@ function wireWorker(){
 }
 
 /* ---------- misc ---------- */
-function signOut(){ DB.session=null; save(); render(); }
+function signOut(){
+  api("/auth/signout","POST").catch(()=>{}).finally(()=>{
+    TOKEN=""; ROLE=""; EMAIL="";
+    localStorage.removeItem("mf_token"); localStorage.removeItem("mf_role"); localStorage.removeItem("mf_email"); localStorage.removeItem("mf_name");
+    DB.session=null; render();
+  });
+}
 function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function initials(name){ const p=String(name||"").trim().split(/\s+/); return (((p[0]||"")[0]||"")+((p[1]||"")[0]||"")).toUpperCase()||"·"; }
 
 /* seed default currency from device locale on first run (overridable in the header) */
 if(!DB.config.currency){ DB.config.currency = localeCurrency(); save(); }
-/* seed services on first run (admin can edit) */
-/* broadcast notice shown to all workers (admin edits) */
-if(typeof DB.notice !== "string"){ DB.notice = ""; save(); }
-
 /* re-render when crossing the phone/PC breakpoint */
 let _wasWide = isWide();
 window.addEventListener("resize", ()=>{
@@ -1303,7 +1305,14 @@ window.addEventListener("resize", ()=>{
   if(w !== _wasWide){ _wasWide = w; if(DB.session && DB.session.role==="admin") render(); }
 });
 
-render();
+/* boot: restore the session from the Worker, else show sign-in */
+(async ()=>{
+  if(TOKEN && ROLE){
+    try{ await hydrate(); }
+    catch(e){ TOKEN=""; ROLE=""; localStorage.removeItem("mf_token"); localStorage.removeItem("mf_role"); localStorage.removeItem("mf_email"); localStorage.removeItem("mf_name"); }
+  }
+  render();
+})();
 </script>
 </body>
 </html>
