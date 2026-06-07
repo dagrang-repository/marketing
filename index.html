@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Marketing — Payment Foundation</title>
+<style>
+  /* Pure: system fonts only — no web-font fetch, fully offline. */
+
+  :root{
+    --paper:#f7f3ec; --card:#fffdf8; --ink:#1c1b17; --ink-soft:#56544c;
+    --line:#e4ddcf; --line-strong:#d3c9b5;
+    --accent:#0f6e56; --accent-soft:#e1f0ea; --accent-ink:#085041;
+    --paid:#3b6d11; --paid-soft:#eaf3de;
+    --warn:#854f0b; --danger:#a32d2d;
+    --r:14px; --r-sm:10px;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --serif:Georgia,Cambria,'Times New Roman',serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--paper); color:var(--ink); font-family:var(--sans);
+    font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 1px 1px, rgba(0,0,0,.025) 1px, transparent 0);
+    background-size:22px 22px;
+  }
+  .wrap{max-width:480px; margin:0 auto; min-height:100%; padding:0 18px 64px;
+    background:var(--paper);
+    border-left:1px solid var(--line); border-right:1px solid var(--line);
+  }
+  @media(min-width:520px){ .wrap{box-shadow:0 0 0 1px var(--line), 0 30px 80px -40px rgba(0,0,0,.18)} }
+
+  /* ---- PC dashboard (admin only, wide screens) ---- */
+  .wrap.pc{max-width:1180px; padding:0 32px 64px}
+  .wrap.pc header.top{padding-top:34px}
+  .wrap.pc .brand{font-size:32px}
+  .admin-grid{display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:20px; align-items:start}
+  .acol{display:flex; flex-direction:column; min-width:0}
+  .wrap.pc .wlist{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px}
+  .wrap.pc .foot{grid-column:1 / -1}
+  @media(max-width:859px){ .wrap.pc{max-width:480px; padding:0 18px 64px} .admin-grid{display:block} .wrap.pc .wlist{display:flex; flex-direction:column} }
+
+  header.top{padding:26px 2px 18px; display:flex; align-items:flex-end; justify-content:space-between; gap:12px}
+  .brand{font-family:var(--serif); font-weight:500; font-size:26px; letter-spacing:-.02em; line-height:1}
+  .brand small{display:block; font-family:var(--sans); font-size:12.5px; font-weight:500; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft); margin-top:7px}
+  .who{font-size:13px; color:var(--ink-soft); text-align:right; max-width:150px}
+  .who b{display:block; color:var(--ink); font-weight:600; font-size:13px}
+  .signout{margin-top:4px; font-size:12.5px; color:var(--accent); background:none; border:none; cursor:pointer; text-decoration:underline; padding:0}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:18px; margin-bottom:14px}
+  .card h2{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; margin-bottom:3px}
+  .card .sub{font-size:13.5px; color:var(--ink-soft); margin-bottom:14px}
+
+  label.fl{display:block; font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin:0 0 6px 2px}
+  input,select{width:100%; font-family:var(--sans); font-size:15px; color:var(--ink);
+    background:var(--paper); border:1px solid var(--line-strong); border-radius:var(--r-sm);
+    padding:12px 13px; outline:none; transition:border-color .15s, box-shadow .15s}
+  input:focus,select:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  input.mono{font-family:var(--mono); letter-spacing:.18em; text-transform:uppercase}
+  .field{margin-bottom:13px}
+  .row{display:flex; gap:10px}
+  .row>*{flex:1}
+
+  button.btn{width:100%; font-family:var(--sans); font-size:15px; font-weight:600; color:#fff;
+    background:var(--accent); border:none; border-radius:var(--r-sm); padding:13px; cursor:pointer;
+    transition:filter .15s, transform .04s}
+  button.btn:hover{filter:brightness(1.07)} button.btn:active{transform:translateY(1px)}
+  button.btn.ghost{background:transparent; color:var(--accent-ink); border:1px solid var(--line-strong)}
+  button.btn.sm{font-size:13px; padding:9px 13px; width:auto}
+  button.btn.pay{background:var(--paid)} button.btn.pay:hover{filter:brightness(1.07)}
+  .wbtns{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
+  button.btn.rmw{background:transparent; color:var(--danger); border:1px solid #e8c9c9; font-weight:500}
+  button.btn.rmw:hover{filter:none; background:#fcebeb; border-color:var(--danger)}
+  button.btn:disabled{opacity:.5; cursor:default; filter:none}
+
+  .note{font-size:13px; line-height:1.55; color:var(--ink-soft);
+    background:var(--accent-soft); border:1px solid #cfe6dd; border-radius:var(--r-sm);
+    padding:11px 13px; margin-bottom:14px}
+  .note b{color:var(--accent-ink)}
+  .note.warn{color:var(--warn); background:#faeeda; border-color:#f3dcb6}
+  .note.warn b{color:var(--warn)}
+  .demo-banner{font-size:13px; color:var(--warn); background:#faeeda; border:1px solid #f3dcb6;
+    border-radius:var(--r-sm); padding:9px 12px; margin:0 0 14px; display:flex; gap:8px; align-items:flex-start}
+  .demo-banner button{margin-left:auto; background:none;border:none;color:var(--warn);cursor:pointer;font-size:15px;line-height:1;padding:0}
+
+  .code-reveal{font-family:var(--mono); font-size:30px; font-weight:500; letter-spacing:.3em;
+    text-align:center; padding:18px; background:var(--paper); border:1px dashed var(--line-strong);
+    border-radius:var(--r-sm); margin:4px 0 14px; color:var(--accent-ink)}
+  .code-hint{font-size:13px; color:var(--ink-soft); text-align:center; margin-bottom:14px}
+
+  /* worker list rows */
+  .wlist{display:flex; flex-direction:column; gap:10px}
+  .wrow{border:1px solid var(--line); border-radius:var(--r-sm); padding:13px 14px; background:var(--paper)}
+  .wrow .l1{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+  .rank{font-family:var(--mono); font-size:13px; color:var(--ink-soft); min-width:26px}
+  .wname{font-weight:600; font-size:15px; flex:1}
+  .wcode{font-family:var(--mono); font-size:12.5px; color:var(--accent-ink); background:var(--accent-soft);
+    padding:2px 7px; border-radius:6px; letter-spacing:.1em}
+  .wmeta{display:flex; align-items:flex-end; justify-content:space-between; margin-top:10px; gap:10px; flex-wrap:wrap}
+  .bal{font-family:var(--mono); font-size:21px; font-weight:500; color:var(--ink); letter-spacing:-.01em}
+  .bal .cur{font-size:13px; color:var(--ink-soft); margin-right:2px}
+  .conf{font-size:13px; color:var(--ink-soft); margin-top:2px}
+  .paidflash{color:var(--paid); font-weight:600; font-size:13px; font-family:var(--sans)}
+
+  /* worker self view */
+  .selfbal{text-align:center; padding:8px 0 4px}
+  .selfbal .cur{font-family:var(--mono); font-size:18px; color:var(--ink-soft); vertical-align:super}
+  .selfbal .amt{font-family:var(--mono); font-size:48px; font-weight:500; letter-spacing:-.02em; line-height:1}
+  .selfbal .lbl{font-size:12.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft); margin-top:8px}
+
+  .bar-wrap{margin:18px 2px 6px}
+  .bar-top{display:flex; justify-content:space-between; font-size:12.5px; color:var(--ink-soft); margin-bottom:7px; font-family:var(--mono)}
+  .bar{height:12px; background:var(--paper); border:1px solid var(--line-strong); border-radius:20px; overflow:hidden}
+  .bar i{display:block; height:100%; background:var(--accent); border-radius:20px; transition:width .5s cubic-bezier(.2,.7,.2,1)}
+  .bar-foot{font-size:13px; color:var(--ink-soft); margin-top:8px; text-align:center}
+
+  .stat-row{display:flex; gap:10px; margin-top:4px}
+  .stat{flex:1; text-align:center; border:1px solid var(--line); border-radius:var(--r-sm); padding:12px 6px; background:var(--paper)}
+  .stat .n{font-family:var(--mono); font-size:20px; font-weight:500}
+  .stat .k{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-soft); margin-top:4px}
+
+  .log{display:flex; flex-direction:column; gap:0}
+  .logitem{display:flex; justify-content:space-between; gap:10px; padding:10px 2px; border-bottom:1px solid var(--line); font-size:13px}
+  .logitem:last-child{border-bottom:none}
+  .logitem .t{color:var(--ink-soft); font-size:13px; font-family:var(--mono)}
+  .logitem .a{font-family:var(--mono); font-weight:500}
+  .logitem .a.minus{color:var(--paid)}
+  .tag{font-size:11.5px; font-weight:600; letter-spacing:.04em; padding:1px 6px; border-radius:5px; text-transform:uppercase}
+  .tag.pur{background:var(--accent-soft); color:var(--accent-ink)}
+  .tag.paid-action{background:#e6f1fb; color:#0c447c}
+  .tag.active{background:var(--paid-soft); color:#27500a}
+
+  .empty{font-size:13px; color:var(--ink-soft); text-align:center; padding:18px 0; font-style:italic}
+  .divider{height:1px; background:var(--line); margin:16px 0}
+  .foot{font-size:12.5px; color:var(--ink-soft); text-align:center; padding:22px 10px 0; line-height:1.6}
+  .foot.fline{padding:28px 10px 7px}
+  .finenote{font-style:italic; font-size:13px; color:var(--ink-soft); text-align:center; line-height:1.65; padding:16px 16px 12px}
+  .seg{display:flex; border:1px solid var(--line-strong); border-radius:var(--r-sm); overflow:hidden; margin-bottom:13px}
+  .seg button{flex:1; background:var(--paper); border:none; padding:10px 3px; font-family:var(--sans); font-size:12.5px; font-weight:500; color:var(--ink-soft); cursor:pointer; border-right:1px solid var(--line-strong)}
+  .seg button:last-child{border-right:none}
+  .seg button.on{background:var(--accent); color:#fff}
+  .brandwrap{display:flex; align-items:flex-end; gap:20px}
+  .ccy{padding-bottom:2px}
+  .ccy select{font-family:var(--mono); font-size:13px; font-weight:500; color:var(--ink);
+    background:var(--card); border:1px solid var(--line-strong); border-radius:8px;
+    padding:6px 8px; cursor:pointer; outline:none; max-width:120px}
+  .ccy select:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .ccode{font-family:var(--mono); font-size:12.5px; color:var(--ink-soft); font-weight:400; margin-left:3px}
+  .svc{display:flex; align-items:flex-start; gap:12px; padding:13px 2px; border-bottom:1px solid var(--line)}
+  .svc:last-child{border-bottom:none}
+  .svc .si{flex:1; min-width:0}
+  .svc .sn{font-weight:600; font-size:14px}
+  .svc .sd{font-size:13.5px; color:var(--ink-soft); margin-top:1px}
+  .svc .su{font-family:var(--mono); font-size:12.5px; color:var(--accent-ink); margin-top:4px; word-break:break-all; opacity:.85}
+  .svc .sa{display:flex; gap:6px; flex-shrink:0}
+  .svc .sa a, .svc .sa button{font-size:13px; padding:6px 10px; border-radius:8px; border:1px solid var(--line-strong); background:var(--paper); color:var(--accent-ink); cursor:pointer; text-decoration:none; font-family:var(--sans); font-weight:500; white-space:nowrap}
+  .svc .sa a:hover, .svc .sa button:hover{border-color:var(--accent)}
+  .svc .sa .rm{color:var(--danger); border-color:#e8c9c9}
+  .notice{background:var(--accent-soft); border:1px solid #cfe6dd; border-radius:var(--r-sm);
+    padding:13px 15px; margin-bottom:14px; display:flex; gap:10px; align-items:flex-start}
+  .notice .ni{flex:1; min-width:0}
+  .notice .nk{font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--accent-ink); margin-bottom:4px}
+  .notice .nt{font-size:14px; color:var(--ink); line-height:1.5; white-space:pre-wrap; word-break:break-word}
+  .notice .nicon{color:var(--accent-ink); font-size:16px; line-height:1.3}
+  .notice.personal{background:#faeeda; border-color:#f3dcb6}
+  .notice.personal .nk{color:#854f0b}
+  .notice.personal .nicon{color:#854f0b}
+  textarea.msg{width:100%; font-family:var(--sans); font-size:15px; color:var(--ink); background:var(--paper);
+    border:1px solid var(--line-strong); border-radius:var(--r-sm); padding:12px 13px; outline:none; min-height:74px; resize:vertical; line-height:1.5}
+  textarea.msg:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .bar-needle{position:relative; height:13px; margin-top:3px}
+  .bar-needle i{position:absolute; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:9px solid var(--accent); transition:left .5s cubic-bezier(.2,.7,.2,1)}
+  .bar-scale{display:flex; justify-content:space-between; font-size:12px; color:var(--ink-soft); font-family:var(--mono); margin-top:1px}
+  .earn{display:flex; flex-direction:column; gap:10px; margin-bottom:13px}
+  .earn-row{display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid var(--line); border-radius:var(--r-sm); padding:13px 14px; background:var(--paper)}
+  .earn-row.top{border-color:var(--accent); background:var(--accent-soft)}
+  .earn-row .en{font-weight:600; font-size:14.5px}
+  .earn-row .ed{font-size:13px; color:var(--ink-soft); margin-top:2px}
+  .earn-row .ev{font-family:var(--mono); font-size:22px; font-weight:500; color:var(--accent-ink); white-space:nowrap; text-align:right; line-height:1}
+  .earn-row .ev .evk{display:block; font-family:var(--sans); font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); margin-top:3px}
+  .dust{font-size:11.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--warn); background:#faeeda; border:1px solid #f3dcb6; padding:1px 6px; border-radius:5px; margin-left:7px; vertical-align:middle}
+  .sim-status{font-size:13px; color:var(--ink-soft); text-align:center; min-height:18px; margin:12px 2px 2px; font-family:var(--mono)}
+  .sim-status.ok{color:var(--paid)} .sim-status.bad{color:var(--danger)} .sim-status.wait{color:var(--warn)}
+  .sim-btns{display:flex; flex-direction:column; gap:8px; margin-top:10px}
+  .sim-btns .btn small{display:block; font-weight:500; font-size:12.5px; opacity:.9; margin-top:3px; text-transform:none; letter-spacing:0; line-height:1.35}
+  .sim-reset{margin-top:9px; font-size:12.5px; padding:9px}
+  .stamp{user-select:none; -webkit-user-select:none; pointer-events:none; text-align:center; margin:30px 0 8px; line-height:1.25}
+  .stamp-top{display:inline-block; font-family:var(--serif); font-size:12.5px; font-weight:500; color:var(--ink-soft); white-space:nowrap}
+  .stamp-bot{display:inline-block; font-family:var(--serif); font-size:15px; font-weight:500; color:var(--ink); white-space:nowrap}
+  .lksite{border:1px solid var(--line); border-radius:var(--r-sm); padding:11px 12px; margin-bottom:10px; background:var(--paper)}
+  .lksh{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .lksn{font-weight:600; font-size:14px}
+  .lksu{font-size:12px; color:var(--ink-soft); word-break:break-all}
+  .lkadd{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+  .empty.sm{padding:8px; font-size:12.5px}
+  .banner{border-radius:var(--r-sm); padding:11px 13px; margin-bottom:12px; font-size:13.5px; line-height:1.45}
+  .banner.ban{background:#fbe9e7; border:1px solid #f3c0b8; color:var(--danger); font-weight:600}
+  .banner.warnb{background:#faeeda; border:1px solid #f3dcb6; color:var(--warn)}
+  .payset{display:flex; gap:8px; margin-top:11px}
+  .payset .btn.on{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink)}
+  .svc.justgen{border:1px solid var(--accent); background:var(--accent-soft); border-radius:var(--r-sm); padding:9px 11px}
+  .gtag{font-size:11px; color:var(--accent-ink); border:1px solid var(--accent); border-radius:999px; padding:1px 7px; margin-left:6px; white-space:nowrap}
+  .l1[data-expand]{cursor:pointer; display:flex; align-items:center; gap:8px}
+  .chev{margin-left:auto; color:var(--ink-soft); font-size:12px; transition:transform .2s ease}
+  .wrow.open .chev{transform:rotate(90deg)}
+  .wexp{overflow:hidden; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); animation:wexpIn .22s ease both}
+  @keyframes wexpIn{from{opacity:0; transform:translateY(-4px); max-height:0}to{opacity:1; transform:none; max-height:640px}}
+  .wexp-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px}
+  .wexp-grid>div{background:var(--paper); border:1px solid var(--line); border-radius:var(--r-sm); padding:7px 9px}
+  .wexp-grid span{display:block; font-size:11px; color:var(--ink-soft)}
+  .wexp-grid b{font-size:15px}
+  .wexp-tags{display:flex; gap:6px; flex-wrap:wrap; margin-top:9px}
+  .wtag{font-size:11px; border-radius:999px; padding:1px 8px; border:1px solid var(--line)}
+  .wtag.ban{color:var(--danger); border-color:#f3c0b8; background:#fbe9e7}
+  .wtag.warn{color:var(--warn); border-color:#f3dcb6; background:#faeeda}
+  .wtag.req{color:var(--accent-ink); border-color:var(--accent); background:var(--accent-soft)}
+  .wexp-links{margin-top:10px}
+  .wexp-lh{font-size:11.5px; color:var(--ink-soft); margin-bottom:5px}
+  .wexp-link{display:flex; align-items:center; gap:8px; margin-bottom:5px}
+  .wexp-link .mono{flex:1; font-size:12px; word-break:break-all; color:var(--ink-soft)}
+  .wexp-empty{font-size:12px; color:var(--ink-soft)}
+  .genres{border:1px solid var(--accent); background:var(--accent-soft); border-radius:var(--r-sm); padding:12px 13px; margin-bottom:14px}
+  .genres-h{font-weight:600; font-size:13px; margin-bottom:6px}
+  .genres-link{font-size:13px; word-break:break-all; background:var(--paper); border:1px solid var(--line); border-radius:var(--r-sm); padding:8px 9px}
+  .genres-a{display:flex; gap:8px; align-items:center; margin-top:8px}
+  .genres-n{font-size:12px; color:var(--accent-ink); margin-top:8px}
+  .opt{color:var(--ink-soft); font-weight:400; font-size:11px}
+  .ident{display:flex; align-items:center; gap:11px; margin-bottom:12px}
+  .identthumb{width:46px; height:46px; border-radius:8px; object-fit:cover; border:1px solid var(--line); background:var(--card); flex-shrink:0}
+  .identthumb.ph{background:var(--card)}
+  .identname{font-weight:600; font-size:15px}
+  .identmail{font-size:12.5px; color:var(--ink-soft); word-break:break-all}
+  .paywrap{display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap}
+  .payphoto{display:flex; flex-direction:column; gap:8px; align-items:center}
+  .idthumb{width:108px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:var(--paper)}
+  .idthumb.ph{display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:12px}
+  .idthumb.sm{width:52px; height:68px; border-radius:6px; flex-shrink:0}
+  .filelbl{cursor:pointer; text-align:center}
+  .filelbl input[type=file]{display:none}
+  .payfields{flex:1; min-width:220px}
+  .wexp-pay{display:flex; gap:10px; align-items:flex-start; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line)}
+  .wexp-paymeta{font-size:12.5px; min-width:0}
+  .wexp-email{font-weight:600; word-break:break-all}
+  .mut{color:var(--ink-soft)}
+  .nwphoto{display:flex; align-items:center; gap:10px}
+  .wexp-id{display:flex; align-items:center; gap:10px; margin-bottom:10px}
+  .wexp-id .wexp-email{font-weight:600; font-size:13px; word-break:break-all}
+  .whead{display:flex; align-items:center; gap:15px; margin:6px 0 16px}
+  .whead-ava{position:relative; width:80px; height:80px; border-radius:50%; flex-shrink:0; padding:3px; background:linear-gradient(135deg,var(--accent),var(--accent-soft)); box-shadow:0 4px 14px rgba(0,0,0,.10)}
+  .whead-ava img,.whead-ava .whead-ini{display:flex; align-items:center; justify-content:center; width:100%; height:100%; border-radius:50%; object-fit:cover; background:var(--card); color:var(--accent-ink); font-family:var(--serif); font-size:27px; font-weight:600; border:2px solid var(--paper); box-sizing:border-box}
+  .whead-badge{position:absolute; bottom:-1px; right:-3px; background:#f4c430; color:#5a4500; font-size:10px; font-weight:700; padding:2px 8px; border-radius:999px; border:2px solid var(--paper); white-space:nowrap}
+  .whead-hi{font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-soft)}
+  .whead-name{font-family:var(--serif); font-size:25px; font-weight:600; line-height:1.08; margin:2px 0 4px}
+  .whead-mail{font-size:12px; color:var(--ink-soft); word-break:break-all}
+  .srow{display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap}
+  .srow input{flex:1; min-width:140px}
+  .chk{display:flex; align-items:center; gap:8px; font-size:13px; margin:2px 0 10px; color:var(--ink-soft)}
+  .chk input{width:16px; height:16px}
+  .sbadge{font-size:10.5px; border-radius:999px; padding:1px 8px; border:1px solid var(--line); margin-left:7px; white-space:nowrap; font-weight:500}
+  .sbadge.own{color:var(--paid); border-color:var(--paid-soft); background:var(--paid-soft)}
+  .sbadge.track{color:var(--ink-soft)}
+  .lkstats{font-size:11.5px; color:var(--ink-soft); margin-top:4px}
+  .lstatus{font-size:10.5px; border-radius:999px; padding:1px 8px; margin-left:7px}
+  .lstatus.paused{color:var(--warn); border:1px solid #f3dcb6; background:#faeeda}
+  .lstatus.retired{color:var(--ink-soft); border:1px solid var(--line)}
+  .lkacts{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; align-items:center}
+  .qrwrap{margin-top:9px}
+  .qrwrap summary{cursor:pointer; font-size:12.5px; color:var(--accent-ink); display:inline-block; list-style:none}
+  .qrwrap summary::-webkit-details-marker{display:none}
+  .qrwrap summary::before{content:"▸ "}
+  .qrwrap[open] summary::before{content:"▾ "}
+  .qrimg{display:inline-block; margin-top:9px; background:#fff; padding:8px; border-radius:8px; border:1px solid var(--line); line-height:0}
+  .qrimg svg{display:block; width:160px; height:160px}
+  .qrfail{font:11px/1.4 var(--mono,monospace); color:var(--danger); margin-top:9px}
+  .srctag{font-size:10.5px; border-radius:999px; padding:1px 8px; margin-left:7px; color:var(--accent-ink); border:1px solid var(--accent); background:var(--accent-soft); font-weight:500}
+  .hide{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   Marketing — Payment Foundation (standalone build)
+   Two ways a worker earns, on one ₱100 bar (1 point = ₱1):
+     - verified result = 70 points (₱70): purchase, paid action, or
+       verified-active member (returned + active after holding window)
+     - traffic = dust: 3 unique-IP clicks = 1 point (₱1); same-IP repeats count once
+   Balance banks in ₱100 steps; the needle carries the remainder.
+   Refund/cancel after a credit does NOT reverse the balance (absorb).
+   Standalone uses localStorage (single device, codes shown on screen).
+   Production wiring (multi-device, emailed codes, encrypted payout,
+   Stripe / Veliane auto-intake) is in worker.js + README.md.
+   ============================================================ */
+
+const KEY = "marketing_foundation_v1";
+
+/* ---- reward model (PH market; one bar = 100 points, 1 point = ₱1) ---- */
+const BAR_FULL         = 100; // points that fill one bar; a full bar banks this much to the payable balance
+const RESULT_VALUE     = 70;  // one verified result (sign-up / purchase / paid action) = 70 points = ₱70
+const CLICKS_PER_POINT = 3;   // 3 unique-IP clicks = 1 point (₱1) — "dust"; same-IP repeats count once
+function creditWorker(w, points, kind){
+  if(w.banned) return;                            // a banned worker earns nothing
+  w.pending = (w.pending||0) + points;            // fill the current bar
+  while(w.pending >= BAR_FULL){ w.pending -= BAR_FULL; w.balance = (w.balance||0) + BAR_FULL; } // bank each full ₱100
+  if(kind==="result"){ w.confirmed = (w.confirmed||0) + 1; }
+}
+
+/* ---- currencies (top 20, display only — no conversion in the single-file build) ---- */
+const CURRENCIES = {
+  USD:{s:"$",n:"US Dollar"},        EUR:{s:"€",n:"Euro"},               GBP:{s:"£",n:"British Pound"},
+  JPY:{s:"¥",n:"Japanese Yen"},     CNY:{s:"¥",n:"Chinese Yuan"},       INR:{s:"₹",n:"Indian Rupee"},
+  PHP:{s:"₱",n:"Philippine Peso"},  IDR:{s:"Rp",n:"Indonesian Rupiah"}, VND:{s:"₫",n:"Vietnamese Dong"},
+  KHR:{s:"៛",n:"Cambodian Riel"},   THB:{s:"฿",n:"Thai Baht"},          MYR:{s:"RM",n:"Malaysian Ringgit"},
+  SGD:{s:"S$",n:"Singapore Dollar"},AUD:{s:"A$",n:"Australian Dollar"}, CAD:{s:"C$",n:"Canadian Dollar"},
+  BRL:{s:"R$",n:"Brazilian Real"},  ARS:{s:"$",n:"Argentine Peso"},     MXN:{s:"$",n:"Mexican Peso"},
+  NGN:{s:"₦",n:"Nigerian Naira"},   ZAR:{s:"R",n:"South African Rand"}
+};
+const REGION_CCY = { US:"USD",GB:"GBP",JP:"JPY",CN:"CNY",IN:"INR",PH:"PHP",ID:"IDR",VN:"VND",KH:"KHR",
+  TH:"THB",MY:"MYR",SG:"SGD",AU:"AUD",CA:"CAD",BR:"BRL",AR:"ARS",MX:"MXN",NG:"NGN",ZA:"ZAR",
+  FR:"EUR",DE:"EUR",ES:"EUR",IT:"EUR",NL:"EUR",IE:"EUR",PT:"EUR",BE:"EUR",AT:"EUR",FI:"EUR",GR:"EUR" };
+function localeCurrency(){
+  try{
+    const region = (navigator.language||"").split("-")[1];
+    if(region && REGION_CCY[region.toUpperCase()]) return REGION_CCY[region.toUpperCase()];
+    const reg = new Intl.Locale(navigator.language).maximize().region;
+    if(reg && REGION_CCY[reg.toUpperCase()]) return REGION_CCY[reg.toUpperCase()];
+  }catch(e){}
+  return "USD";
+}
+function ccySym(code){ return (CURRENCIES[code]||CURRENCIES.USD).s; }
+function money(amount, code){ return ccySym(code) + Number(amount||0).toLocaleString(); }
+
+const RESULT_TYPES = {
+  purchase:    { label:"Purchase (Stripe)",        tag:"pur",         hint:"A completed checkout — money moved." },
+  paid_action: { label:"Paid action (sub/booking)",tag:"paid-action", hint:"A subscription, deposit or booking — a card was charged." },
+  active:      { label:"Verified-active member",   tag:"active",      hint:"Signed up AND returned + active after the holding window." },
+};
+
+/* ---- services (who the worker is working for) — admin-managed, shown on worker page ---- */
+/* ---------- store ---------- */
+function load(){
+  try{ const d = JSON.parse(localStorage.getItem(KEY)); if(d&&d.workers) return d; }catch(e){}
+  return { config:{ adminEmail:"" }, workers:[], results:[], payments:[], sites:[], links:[], session:null, bannerDismissed:false };
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){ alert("Couldn't save — device storage is full. Try a smaller photo, or remove old data."); } }
+let DB = load();
+
+/* ---------- helpers ---------- */
+const $ = (s,el=document)=>el.querySelector(s);
+const wcur = w => (w && w.currency) || DB.config.currency || "USD";
+const now = ()=>Date.now();
+const fmtDate = ts => new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"});
+function genCode(){ const a="ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let s=""; for(let i=0;i<6;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
+function suggestGate(name){
+  const base=(name||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,8)||"W";
+  let code=base, n=1; const taken=DB.workers.map(w=>w.code);
+  while(taken.includes(code)){ code=(base.slice(0,6))+(++n); } return code;
+}
+function workerByEmail(e){ return DB.workers.find(w=>w.email.toLowerCase()===(e||"").toLowerCase()); }
+function workerById(id){ return DB.workers.find(w=>w.id===id); }
+function siteById(id){ return (DB.sites||[]).find(s=>s.id===id); }
+function linksForWorker(wid){ return (DB.links||[]).filter(l=>l.workerId===wid); }
+function ranked(){
+  return [...DB.workers].sort((a,b)=> (b.balance-a.balance) || (b.confirmed-a.confirmed) || a.name.localeCompare(b.name));
+}
+function rankOf(id){ return ranked().findIndex(w=>w.id===id)+1; }
+
+/* ---------- transient auth state (not persisted) ---------- */
+let pending = null; // { email, code, role, workerId }
+let lastGenId = null; // highlights the link just generated
+let genNote = ""; // feedback after a mass generate
+let expandedW = null; // which admin worker card is open
+let newPhoto = null; // ID photo staged in the add-worker form
+
+/* ============================================================ render ============================================================ */
+function isWide(){ return window.matchMedia("(min-width:860px)").matches; }
+function render(){
+  const app = $("#app");
+  app.classList.toggle("pc", !!(DB.session && DB.session.role==="admin" && isWide()));
+  if(!DB.session){ app.innerHTML = viewLogin(); wireLogin(); return; }
+  if(DB.session.role==="admin"){ app.innerHTML = viewAdmin(); wireAdmin(); }
+  else { app.innerHTML = viewWorker(); wireWorker(); }
+}
+
+function ccyOptions(sel){
+  return Object.entries(CURRENCIES).map(([c,v])=>`<option value="${c}" ${c===sel?'selected':''}>${c} ${v.s}</option>`).join("");
+}
+function currencyPicker(){
+  if(!DB.session) return "";
+  if(DB.session.role==="worker"){
+    const w = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
+    return `<div class="ccy"><select id="ccyPick" data-scope="worker" title="Your currency">${ccyOptions(wcur(w))}</select></div>`;
+  }
+  return `<div class="ccy"><select id="ccyPick" data-scope="admin" title="Default currency for new workers">${ccyOptions(DB.config.currency)}</select></div>`;
+}
+function wireCcy(){
+  const p=$("#ccyPick"); if(!p) return;
+  p.onchange=()=>{
+    if(p.dataset.scope==="admin"){ DB.config.currency=p.value; }
+    else { const w=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(w) w.currency=p.value; }
+    save(); render();
+  };
+}
+function topBar(roleLabel, nameLabel){
+  return `<header class="top">
+    <div class="brandwrap">
+      <div class="brand">Marketing<small>Payment foundation</small></div>
+      ${currencyPicker()}
+    </div>
+    <div class="who">${roleLabel}<b>${nameLabel}</b>
+      ${DB.session?'<button class="signout" id="signout">Sign out</button>':''}
+    </div>
+  </header>`;
+}
+
+function demoBanner(){
+  if(DB.bannerDismissed) return "";
+  return `<div class="demo-banner">
+    <span>Local preview — data lives in this browser only. Codes are shown on screen instead of emailed. Wire <b>worker.js</b> for real multi-device use.</span>
+    <button id="dismissBanner" aria-label="Dismiss">×</button>
+  </div>`;
+}
+
+/* ---------------- LOGIN ---------------- */
+function viewLogin(){
+  const needSetup = !DB.config.adminEmail;
+  return `${topBar("","")}
+  ${demoBanner()}
+  ${ needSetup ? `
+    <div class="card">
+      <h2>First, set the admin</h2>
+      <div class="sub">This email is the command board. Anyone logging in with it gets the admin view; everyone else gets their own worker view.</div>
+      <div class="field"><label class="fl">Admin email</label>
+        <input id="adminEmail" type="email" placeholder="you@email.com" autocomplete="off"></div>
+      <button class="btn" id="saveAdmin">Set admin email</button>
+    </div>` : `
+    <div class="card" id="loginCard">
+      <h2>Sign in</h2>
+      <div class="sub">Enter your email. A 6-character code will confirm it.</div>
+      <div id="step1">
+        <div class="field"><label class="fl">Email</label>
+          <input id="loginEmail" type="email" placeholder="you@email.com" autocomplete="off"></div>
+        <button class="btn" id="sendCode">Send code</button>
+      </div>
+      <div id="step2" class="hide">
+        <div class="code-reveal" id="codeShown"></div>
+        <div class="code-hint">In production this arrives by email. Enter it below.</div>
+        <div class="field"><label class="fl">Code</label>
+          <input id="loginCode" class="mono" maxlength="6" placeholder="------" autocomplete="off"></div>
+        <button class="btn" id="verifyCode">Verify &amp; enter</button>
+        <div style="height:8px"></div>
+        <button class="btn ghost" id="backStep">Use a different email</button>
+      </div>
+    </div>
+    <div class="note">Real money comes from <b>verified results</b> — purchases, paid actions, active members. Clicks earn only dust.</div>
+  `}
+  <div class="foot">Marketing · payment & attribution foundation</div>`;
+}
+function wireLogin(){
+  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
+  const sa=$("#saveAdmin");
+  if(sa){ sa.onclick=()=>{ const v=$("#adminEmail").value.trim(); if(!/.+@.+\..+/.test(v)){ $("#adminEmail").focus(); return; }
+    DB.config.adminEmail=v; save(); render(); }; return; }
+
+  $("#sendCode").onclick=()=>{
+    const email=$("#loginEmail").value.trim();
+    if(!/.+@.+\..+/.test(email)){ $("#loginEmail").focus(); return; }
+    const isAdmin = email.toLowerCase()===DB.config.adminEmail.toLowerCase();
+    const w = workerByEmail(email);
+    if(!isAdmin && !w){ alert("That email isn't the admin or a registered worker. Add the worker first from the command board."); return; }
+    pending = { email, code:genCode(), role:isAdmin?"admin":"worker", workerId:w?w.id:null };
+    $("#step1").classList.add("hide"); $("#step2").classList.remove("hide");
+    $("#codeShown").textContent = pending.code; $("#loginCode").focus();
+  };
+  const back=$("#backStep"); if(back) back.onclick=()=>{ pending=null; $("#step2").classList.add("hide"); $("#step1").classList.remove("hide"); $("#loginCode").value=""; };
+  const vc=$("#verifyCode"); if(vc) vc.onclick=()=>{
+    if(!pending) return;
+    if(($("#loginCode").value||"").trim().toUpperCase()!==pending.code){ alert("Code doesn't match."); return; }
+    DB.session={ email:pending.email, role:pending.role, workerId:pending.workerId };
+    pending=null; save(); render();
+  };
+}
+
+function adminNotice(){
+  const v = DB.notice || "";
+  return `<div class="card">
+    <h2>Message to all workers</h2>
+    <div class="sub">${ v ? 'This is showing on every worker\u2019s page now. Edit and save to change it, or clear it to remove it.' : 'Type a note and save \u2014 it appears on every worker\u2019s page, just above their pay line.' }</div>
+    <div class="field"><textarea class="msg" id="noticeText" placeholder="Tomorrow, 31 December, New Year\u2019s Eve \u2014 you earn double.">${escapeHtml(v)}</textarea></div>
+    <div class="row">
+      <button class="btn" id="saveNotice">${ v ? 'Save changes' : 'Save & show' }</button>
+      <button class="btn ghost" id="clearNotice" ${v?'':'disabled'}>Clear message</button>
+    </div>
+  </div>`;
+}
+function wireNotice(){
+  const sv=$("#saveNotice");
+  if(sv) sv.onclick=()=>{ DB.notice=($("#noticeText").value||"").trim(); save(); render(); };
+  const cl=$("#clearNotice");
+  if(cl) cl.onclick=()=>{ DB.notice=""; save(); render(); };
+  // per-worker private note
+  const sel=$("#pwSel");
+  if(sel) sel.onchange=()=>{ const w=workerById(sel.value); const ta=$("#pwText"); if(ta) ta.value = w?(w.note||""):""; };
+  const sp=$("#savePw");
+  if(sp) sp.onclick=()=>{ const w=workerById($("#pwSel").value); if(!w) return; w.note=($("#pwText").value||"").trim(); save(); render(); };
+  const cp=$("#clearPw");
+  if(cp) cp.onclick=()=>{ const w=workerById($("#pwSel").value); if(!w) return; w.note=""; save(); render(); };
+}
+function noticeWorkerHtml(){
+  const v = DB.notice || "";
+  if(!v) return "";
+  return `<div class="notice"><span class="nicon">\u2731</span>
+    <div class="ni"><div class="nk">Notice</div><div class="nt">${escapeHtml(v)}</div></div></div>`;
+}
+function adminPersonalNote(){
+  const opts = DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)}${w.note?" \u2605":""}</option>`).join("");
+  const first = DB.workers[0];
+  const cur = first ? (first.note||"") : "";
+  return `<div class="card">
+    <h2>Message to one worker</h2>
+    <div class="sub">A private note shown only on that worker\u2019s page \u2014 e.g. praise or a bonus.</div>
+    ${ DB.workers.length ? `
+    <div class="field"><label class="fl">Worker</label><select id="pwSel">${opts}</select></div>
+    <div class="field"><textarea class="msg" id="pwText" placeholder="Carlos, I\u2019m very happy with your performance. You\u2019ll get a housing bonus of 2000\u20b1 next month.">${escapeHtml(cur)}</textarea></div>
+    <div class="row">
+      <button class="btn" id="savePw">${cur?'Save changes':'Save & show'}</button>
+      <button class="btn ghost" id="clearPw" ${cur?'':'disabled'}>Clear</button>
+    </div>
+    ` : `<div class="empty">Add a worker first.</div>` }
+  </div>`;
+}
+function personalNoteHtml(w){
+  const v = (w && w.note) || "";
+  if(!v) return "";
+  return `<div class="notice personal"><span class="nicon">\u2605</span>
+    <div class="ni"><div class="nk">For you</div><div class="nt">${escapeHtml(v)}</div></div></div>`;
+}
+
+/* ---------------- ADMIN ---------------- */
+let adminTab = "workers";
+
+function copySvc(url, btn){
+  const done=()=>{ const t=btn.textContent; btn.textContent="Copied"; setTimeout(()=>btn.textContent=t,1100); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(url).then(done).catch(()=>fallbackCopy(url,done)); }
+  else fallbackCopy(url, done);
+}
+function fallbackCopy(text, cb){
+  const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select(); try{ document.execCommand("copy"); }catch(e){} document.body.removeChild(ta); cb&&cb();
+}
+function deriveLabel(url){
+  try{ const h=new URL(/^https?:\/\//i.test(url)?url:"https://"+url).hostname.replace(/^www\./,""); const core=(h.split(".")[0]||"site"); return core.charAt(0).toUpperCase()+core.slice(1); }catch(e){ return "Site"; }
+}
+function buildTrackingLink(baseUrl, gate, owned, source){
+  let u; try{ u=new URL(/^https?:\/\//i.test(baseUrl)?baseUrl:"https://"+baseUrl); }catch(e){ return baseUrl; }
+  const src=(source||"").trim().toLowerCase().replace(/[^a-z0-9_-]/g,"");
+  // Owned site (e.g. Veliane): clean path link /r/<code> the site reads to set its referral cookie.
+  if(owned || /(^|\.)veliane\.org$/i.test(u.hostname)){
+    let out=u.origin + "/r/" + encodeURIComponent(gate);
+    if(src) out += "?src=" + encodeURIComponent(src);
+    return out;
+  }
+  // Site you don't own: gate rides as the tracker sub-id; source as a second sub-id.
+  u.searchParams.set("s1", gate);
+  if(src) u.searchParams.set("s2", src);
+  return u.toString();
+}
+function srcTag(s){ return (s||"").trim().toLowerCase().replace(/[^a-z0-9_-]/g,""); }
+const qrSvg=(function(){
+// Minimal self-contained QR encoder — byte mode, ECC level L, versions 1..5 (single
+// error-correction block, so no interleaving). Algorithm mirrors the canonical QR spec
+// (finder/timing/alignment/format placement and masking per Nayuki's reference logic).
+// Returns a module matrix; render() makes an SVG. Capacity v5-L ~ 106 bytes (URLs fit easily).
+
+const EXP = new Array(512), LOG = new Array(256);
+(function () { let x = 1; for (let i = 0; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; } for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255]; })();
+function gmul(a, b) { return (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]]; }
+
+function rsGen(n) { let g = [1]; for (let i = 0; i < n; i++) { const r = new Array(g.length + 1).fill(0); for (let j = 0; j < g.length; j++) { r[j] ^= g[j]; r[j + 1] ^= gmul(g[j], EXP[i]); } g = r; } return g; }
+function rsEncode(data, n) { const g = rsGen(n); const res = new Array(n).fill(0); for (let i = 0; i < data.length; i++) { const f = data[i] ^ res[0]; res.shift(); res.push(0); for (let j = 0; j < n; j++) res[j] ^= gmul(g[j + 1], f); } return res; }
+
+const VER = {
+  1: { size: 21, total: 26, ecc: 7, align: null },
+  2: { size: 25, total: 44, ecc: 10, align: 18 },
+  3: { size: 29, total: 70, ecc: 15, align: 22 },
+  4: { size: 33, total: 100, ecc: 20, align: 26 },
+  5: { size: 37, total: 134, ecc: 26, align: 30 },
+};
+
+function pickVersion(len) {
+  for (let v = 1; v <= 5; v++) { const dataCW = VER[v].total - VER[v].ecc; if (dataCW >= len + 2) return v; }
+  throw new Error("data too long for v1-5 (" + len + " bytes)");
+}
+
+function encodeData(bytes, version) {
+  const dataCW = VER[version].total - VER[version].ecc;
+  const bits = [];
+  const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+  put(0b0100, 4);            // byte mode
+  put(bytes.length, 8);      // char-count (v1-9 byte mode = 8 bits)
+  for (const b of bytes) put(b, 8);
+  const cap = dataCW * 8;
+  for (let i = 0; i < Math.min(4, cap - bits.length); i++) bits.push(0); // terminator
+  while (bits.length % 8 !== 0) bits.push(0);
+  const pads = [0xEC, 0x11]; let p = 0;
+  while (bits.length < cap) { put(pads[p++ % 2], 8); }
+  const cw = []; for (let i = 0; i < bits.length; i += 8) { let v = 0; for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j]; cw.push(v); }
+  return cw;
+}
+
+function fmtBits(mask) {            // ECC level L indicator = 0b01
+  const data5 = (0b01 << 3) | mask;
+  let rem = data5 << 10; const g = 0x537;
+  for (let i = 14; i >= 10; i--) if ((rem >> i) & 1) rem ^= g << (i - 10);
+  return ((data5 << 10) | rem) ^ 0x5412; // 15 bits
+}
+
+function maskCond(k, r, c) {
+  switch (k) {
+    case 0: return (r + c) % 2 === 0;
+    case 1: return r % 2 === 0;
+    case 2: return c % 3 === 0;
+    case 3: return (r + c) % 3 === 0;
+    case 4: return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
+    case 5: return ((r * c) % 2) + ((r * c) % 3) === 0;
+    case 6: return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0;
+    case 7: return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0;
+  }
+}
+
+function buildMatrix(version, allCW, mask) {
+  const size = VER[version].size;
+  const m = Array.from({ length: size }, () => new Array(size).fill(0));
+  const fn = Array.from({ length: size }, () => new Array(size).fill(false));
+  const set = (r, c, v) => { if (r < 0 || c < 0 || r >= size || c >= size) return; m[r][c] = v ? 1 : 0; fn[r][c] = true; };
+
+  // finder patterns + separators, centers at (3,3),(3,size-4),(size-4,3)
+  function finder(cy, cx) { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d = Math.max(Math.abs(dx), Math.abs(dy)); set(cy + dy, cx + dx, d !== 2 && d !== 4); } }
+  finder(3, 3); finder(3, size - 4); finder(size - 4, 3);
+  // timing
+  for (let i = 0; i < size; i++) { if (!fn[6][i]) set(6, i, i % 2 === 0); if (!fn[i][6]) set(i, 6, i % 2 === 0); }
+  // alignment
+  if (VER[version].align !== null) { const a = VER[version].align; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(a + dy, a + dx, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); }
+  // dark module
+  set(size - 8, 8, true);
+  // reserve format areas (mark function so data skips them)
+  const reserve = (r, c) => { fn[r][c] = true; };
+  for (let i = 0; i <= 5; i++) reserve(8, i);
+  reserve(8, 7); reserve(8, 8); reserve(7, 8);
+  for (let i = 9; i < 15; i++) reserve(14 - i, 8);
+  for (let i = 0; i < 8; i++) reserve(size - 1 - i, 8);
+  for (let i = 8; i < 15; i++) reserve(8, size - 15 + i);
+
+  // data zigzag (Nayuki ordering) with mask applied to data modules
+  let idx = 0; const totalBits = allCW.length * 8;
+  const bitAt = (k) => (allCW[k >> 3] >> (7 - (k & 7))) & 1;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) {
+      for (let j = 0; j < 2; j++) {
+        const x = right - j;
+        const upward = ((right + 1) & 2) === 0;
+        const y = upward ? size - 1 - vert : vert;
+        if (fn[y][x]) continue;
+        let dark = idx < totalBits ? bitAt(idx) : 0; idx++;
+        if (maskCond(mask, y, x)) dark ^= 1;
+        m[y][x] = dark;
+      }
+    }
+  }
+  // format info (two copies)
+  const fmt = fmtBits(mask); const fb = (i) => (fmt >> i) & 1;
+  for (let i = 0; i <= 5; i++) m[8][i] = fb(i);
+  m[8][7] = fb(6); m[8][8] = fb(7); m[7][8] = fb(8);
+  for (let i = 9; i < 15; i++) m[14 - i][8] = fb(i);
+  for (let i = 0; i < 8; i++) m[size - 1 - i][8] = fb(i);
+  for (let i = 8; i < 15; i++) m[8][size - 15 + i] = fb(i);
+  m[size - 8][8] = 1;
+  return { m, fn, size };
+}
+
+function penalty(m, size) {
+  let p = 0;
+  // rule 1: runs >=5 in rows and cols
+  for (let r = 0; r < size; r++) for (const get of [(c) => m[r][c], (c) => m[c][r]]) {
+    let run = 1; for (let c = 1; c < size; c++) { if (get(c) === get(c - 1)) { run++; if (run === 5) p += 3; else if (run > 5) p += 1; } else run = 1; }
+  }
+  // rule 2: 2x2 blocks
+  for (let r = 0; r < size - 1; r++) for (let c = 0; c < size - 1; c++) { const v = m[r][c]; if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) p += 3; }
+  // rule 3: finder-like 1011101 + 0000 patterns
+  const pat1 = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], pat2 = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+  const match = (arr, i, get) => { for (let k = 0; k < 11; k++) if (get(i + k) !== arr[k]) return false; return true; };
+  for (let r = 0; r < size; r++) for (let c = 0; c <= size - 11; c++) { if (match(pat1, c, (i) => m[r][i]) || match(pat2, c, (i) => m[r][i])) p += 40; if (match(pat1, c, (i) => m[i][r]) || match(pat2, c, (i) => m[i][r])) p += 40; }
+  // rule 4: dark proportion
+  let dark = 0; for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) dark += m[r][c];
+  const pct = dark * 100 / (size * size); p += Math.floor(Math.abs(pct - 50) / 5) * 10;
+  return p;
+}
+
+function qrMatrix(text) {
+  const bytes = Array.from(new TextEncoder().encode(text));
+  const version = pickVersion(bytes.length);
+  const data = encodeData(bytes, version);
+  const ecc = rsEncode(data, VER[version].ecc);
+  const allCW = data.concat(ecc);
+  let best = null;
+  for (let mask = 0; mask < 8; mask++) { const { m, size } = buildMatrix(version, allCW, mask); const pen = penalty(m, size); if (!best || pen < best.pen) best = { m, size, pen, mask, version }; }
+  return best;
+}
+
+function svg(text, px) {
+  const { m, size } = qrMatrix(text);
+  const q = 4, dim = size + q * 2;            // 4-module quiet zone
+  let path = "";
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (m[r][c]) path += `M${c + q} ${r + q}h1v1h-1z`;
+  const wh = px || 160;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${wh}" height="${wh}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
+}
+return function(link){ try{ return svg(String(link||""),160); }catch(e){ return '<div class=\"qrfail\">link too long for offline QR</div>'; } };
+})();
+function linkLabel(l){ return l.title || l.label || (l.baseUrl?deriveLabel(l.baseUrl):(l.coded?deriveLabel(l.coded):"Link")); }
+function shareMsg(l){ return `${linkLabel(l)} — have a look: ${l.coded||""}`; }
+function adminLinks(){
+  const links = DB.links||[]; const sites = DB.sites||[];
+  // --- registry list ---
+  const siteList = sites.length ? sites.map(s=>`<div class="svc">
+      <div class="si"><div class="sn">${escapeHtml(s.name)}<span class="sbadge ${s.owned?'own':'track'}">${s.owned?'owned · clean link':'tracked'}</span></div><div class="sd mono">${escapeHtml(s.url)}</div></div>
+      <div class="sa"><button class="rm" data-sitrm="${s.id}">Remove</button></div>
+    </div>`).join("") : `<div class="empty sm">No sites yet — add your first below.</div>`;
+  // --- generate form options ---
+  const sopts = sites.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}${s.owned?'':' (tracked)'}</option>`).join("") + `<option value="">— or paste a URL below —</option>`;
+  const wopts = `<option value="ALL">— All workers (mass) —</option>` + DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)} — ${w.code}</option>`).join("");
+  // --- generated links grouped by worker ---
+  const byWorker = {}; links.forEach(l=>{ (byWorker[l.workerId]=byWorker[l.workerId]||[]).push(l); });
+  const groups = DB.workers.filter(w=>byWorker[w.id]&&byWorker[w.id].length).map(w=>{
+    const sym=ccySym(wcur(w));
+    const rows = byWorker[w.id].map(l=>{
+      const link=l.coded||"", st=l.stats||{}, status=l.status||'active', hot=l.id===lastGenId?" justgen":"";
+      return `<div class="svc${hot}">
+        <div class="si">
+          <div class="sn">${escapeHtml(linkLabel(l))}${l.source?`<span class="srctag">${escapeHtml(l.source)}</span>`:''}${status!=='active'?`<span class="lstatus ${status}">${status}</span>`:''}${hot?` <span class="gtag">just generated</span>`:''}</div>
+          ${l.desc?`<div class="sd">${escapeHtml(l.desc)}</div>`:''}
+          <div class="sd mono">${escapeHtml(link)}</div>
+          <div class="lkstats">Clicks ${st.clicks??'—'} · Sign-ups ${st.signups??'—'} · Sales ${st.purchases??'—'} · ${sym}${st.earned??'—'}</div>
+          <details class="qrwrap"><summary>Show QR</summary><div class="qrimg">${qrSvg(link)}</div></details>
+          <div class="lkacts">
+            <button data-copy="${escapeHtml(link)}">Copy link</button>
+            <button data-copy="${escapeHtml(shareMsg(l))}">Copy message</button>
+            <a href="${encodeURI(link)}" target="_blank" rel="noopener">Open</a>
+            ${status!=='active'?`<button class="btn sm" data-lkstatus="${l.id}:active">Activate</button>`:`<button class="btn sm" data-lkstatus="${l.id}:paused">Pause</button>`}
+            ${status!=='retired'?`<button class="btn sm" data-lkstatus="${l.id}:retired">Retire</button>`:''}
+            <button class="rm" data-lkrm="${l.id}">Remove</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+    return `<div class="lksite"><div class="lksh"><div><div class="lksn">${escapeHtml(w.name)}</div><div class="lksu">code ${w.code} &middot; ${byWorker[w.id].length} link${byWorker[w.id].length>1?'s':''}</div></div></div>${rows}</div>`;
+  }).join("");
+  // --- result note (single or mass) ---
+  let note="";
+  const g=links.find(l=>l.id===lastGenId);
+  if(g){ const gw=workerById(g.workerId); const nm=gw?escapeHtml(gw.name.split(" ")[0]||gw.name):"the worker";
+    note=`<div class="genres"><div class="genres-h">${gw?escapeHtml(gw.name)+"'s":"Worker"} link</div><div class="genres-link mono">${escapeHtml(g.coded||"")}</div><div class="genres-a"><button data-copy="${escapeHtml(g.coded||"")}">Copy</button><a href="${encodeURI(g.coded||"")}" target="_blank" rel="noopener">Open</a></div><div class="genres-n">On ${nm}'s page now (with QR + a ready message). Or send it to ${nm}.</div></div>`;
+  } else if(genNote){ note=`<div class="genres"><div class="genres-n" style="color:var(--accent-ink)">${escapeHtml(genNote)}</div></div>`; }
+
+  return `<div class="card">
+    <h2>Our sites</h2>
+    <div class="sub">Add each site once. Owned sites get a clean link; others get a tracked one.</div>
+    ${siteList}
+    <div class="srow">
+      <input id="stName" placeholder="Site name (Veliane)" autocomplete="off">
+      <input id="stUrl" placeholder="https://veliane.org/" autocomplete="off">
+    </div>
+    <label class="chk"><input type="checkbox" id="stOwned" checked> I own this site (clean link, self-counted)</label>
+    <button class="btn sm" id="addSite">Add site</button>
+  </div>
+  <div class="card">
+    <h2>Generate links</h2>
+    <div class="sub">Pick a site and a worker — or All workers — and generate. Each gets their own link, QR and message, on their page.</div>
+    ${note}
+    ${ DB.workers.length ? `
+    <div class="field"><label class="fl">Site</label><select id="genSite">${sopts}</select></div>
+    <div class="field" id="pasteField"><label class="fl">Page link</label><input id="lkBase" placeholder="https://…" autocomplete="off"></div>
+    <div class="field"><label class="fl">Title <span class="opt">(shown on their page)</span></label><input id="lkTitle" placeholder="Veliane — find a partner" autocomplete="off"></div>
+    <div class="field"><label class="fl">Description <span class="opt">(optional)</span></label><input id="lkDesc" placeholder="Matchmaker for serious singles" autocomplete="off"></div>
+    <div class="field"><label class="fl">Source tag <span class="opt">(optional — where they'll share it)</span></label><input id="lkSource" placeholder="instagram, whatsapp, flyer…" autocomplete="off"></div>
+    <div class="field"><label class="fl">Worker</label><select id="lkWorker">${wopts}</select></div>
+    <button class="btn" id="genLink">Generate</button>
+    ` : `<div class="empty">Add a worker first — then you can generate links.</div>` }
+    ${ groups ? `<div class="divider"></div>${groups}` : (DB.workers.length?`<div class="empty sm">No links yet — generate above.</div>`:"") }
+  </div>`;
+}
+function makeLink(w, base, owned, title, desc, siteId, source){
+  const src=srcTag(source); const coded=buildTrackingLink(base, w.code, owned, src), label=deriveLabel(base);
+  DB.links=DB.links||[];
+  const ex=DB.links.find(l=> l.workerId===w.id && (l.source||"")===src && ((siteId&&l.siteId===siteId) || l.baseUrl===base));
+  if(ex){ ex.baseUrl=base; ex.owned=owned; ex.label=label; ex.coded=coded; ex.title=title; ex.desc=desc; ex.source=src; ex.siteId=siteId||ex.siteId||null; if(!ex.status) ex.status='active'; ex.ts=now(); return ex.id; }
+  const id="lk_"+now().toString(36)+Math.floor(Math.random()*1e3);
+  DB.links.push({ id, workerId:w.id, siteId:siteId||null, baseUrl:base, owned:!!owned, label, coded, title, desc, source:src, status:'active', ts:now() });
+  return id;
+}
+function wireLinks(){
+  // sites registry
+  const addS=$("#addSite");
+  if(addS) addS.onclick=()=>{
+    const name=$("#stName").value.trim(); let url=$("#stUrl").value.trim();
+    if(!name){ $("#stName").focus(); return; }
+    if(!url){ $("#stUrl").focus(); return; }
+    if(!/^https?:\/\//i.test(url)) url="https://"+url;
+    DB.sites=DB.sites||[]; DB.sites.push({ id:"st_"+now().toString(36)+Math.floor(Math.random()*1e3), name, url, owned:$("#stOwned").checked, ts:now() });
+    save(); render();
+  };
+  document.querySelectorAll("[data-sitrm]").forEach(b=> b.onclick=()=>{ DB.sites=(DB.sites||[]).filter(s=>s.id!==b.dataset.sitrm); save(); render(); });
+
+  // site picker -> prefill URL + title, toggle the paste field
+  const gs=$("#genSite");
+  const syncSite=()=>{ const s=siteById(gs.value); const pf=$("#pasteField"), tb=$("#lkBase"), tt=$("#lkTitle");
+    if(s){ if(pf) pf.style.display="none"; if(tb) tb.value=s.url; if(tt && !tt.value.trim()) tt.value=s.name; }
+    else { if(pf) pf.style.display=""; if(tb && tb.readOnly===false){} }
+  };
+  if(gs){ gs.onchange=syncSite; syncSite(); }
+
+  // generate (one worker or all)
+  const gen=$("#genLink");
+  if(gen) gen.onclick=()=>{
+    const s = gs ? siteById(gs.value) : null;
+    const base = s ? s.url : $("#lkBase").value.trim();
+    const owned = s ? !!s.owned : false;
+    const siteId = s ? s.id : null;
+    if(!base){ if($("#lkBase")) $("#lkBase").focus(); return; }
+    const title=($("#lkTitle")&&$("#lkTitle").value.trim())||"";
+    const desc=($("#lkDesc")&&$("#lkDesc").value.trim())||"";
+    const source=($("#lkSource")&&$("#lkSource").value.trim())||"";
+    const wid=$("#lkWorker").value;
+    if(wid==="ALL"){
+      if(!DB.workers.length) return;
+      DB.workers.forEach(w=> makeLink(w, base, owned, title, desc, siteId, source));
+      lastGenId=null; genNote=`Made ${title||deriveLabel(base)}${srcTag(source)?' ('+srcTag(source)+')':''} links for ${DB.workers.length} worker${DB.workers.length>1?'s':''} — each has it on their page.`;
+    } else {
+      const w=workerById(wid); if(!w) return;
+      lastGenId=makeLink(w, base, owned, title, desc, siteId, source); genNote="";
+    }
+    save(); render();
+  };
+
+  document.querySelectorAll("[data-lkstatus]").forEach(b=> b.onclick=()=>{ const [id,st]=b.dataset.lkstatus.split(":"); const l=(DB.links||[]).find(x=>x.id===id); if(l){ l.status=st; save(); render(); } });
+  document.querySelectorAll("[data-lkrm]").forEach(b=> b.onclick=()=>{ DB.links=(DB.links||[]).filter(l=>l.id!==b.dataset.lkrm); if(b.dataset.lkrm===lastGenId) lastGenId=null; save(); render(); });
+  document.querySelectorAll("[data-copy]").forEach(b=> b.onclick=()=> copySvc(b.dataset.copy, b));
+}
+function adminFoot(){
+  return `<div class="foot">Each worker has a gate code. Results carrying that code credit automatically (Stripe / Veliane); anything you confirm by hand, inject here.</div>`;
+}
+function viewAdmin(){
+  const head = `${topBar("Command board","Admin")}${demoBanner()}`;
+  if(isWide()){
+    // PC: full dashboard, everything visible
+    return `${head}<div class="admin-grid">
+      <div class="acol">${adminWorkers()}</div>
+      <div class="acol">${adminInject()}${adminNotice()}${adminPersonalNote()}${adminLinks()}${adminLog()}</div>
+      ${adminFoot()}
+    </div>`;
+  }
+  // Mobile: segmented tabs, one section at a time
+  return `${head}
+  <div class="seg">
+    <button data-tab="workers" class="${adminTab==='workers'?'on':''}">Workers</button>
+    <button data-tab="inject" class="${adminTab==='inject'?'on':''}">Inject</button>
+    <button data-tab="message" class="${adminTab==='message'?'on':''}">Message</button>
+    <button data-tab="links" class="${adminTab==='links'?'on':''}">Links</button>
+    <button data-tab="log" class="${adminTab==='log'?'on':''}">Payments</button>
+  </div>
+  ${ adminTab==='workers' ? adminWorkers()
+    : adminTab==='inject' ? adminInject()
+    : adminTab==='message' ? (adminNotice()+adminPersonalNote())
+    : adminTab==='links' ? adminLinks()
+    : adminLog() }
+  ${adminFoot()}`;
+}
+function workerExpand(w){
+  const wc=wcur(w); const links=(DB.links||[]).filter(l=>l.workerId===w.id);
+  const linkRows = links.length ? links.map(l=>`<div class="wexp-link"><span class="mono">${escapeHtml(l.coded||"")}</span><button data-copy="${escapeHtml(l.coded||"")}">Copy</button></div>`).join("")
+    : `<div class="wexp-empty">No link yet — generate one in the Links tab.</div>`;
+  const tags = [
+    w.banned?'<span class="wtag ban">banned</span>':'',
+    (!w.banned&&w.warned)?'<span class="wtag warn">warned</span>':'',
+    w.payoutReq?'<span class="wtag req">payout requested</span>':''
+  ].filter(Boolean).join("");
+  return `<div class="wexp">
+    <div class="wexp-id">
+      ${w.photo?`<img src="${w.photo}" class="idthumb sm" alt="ID photo">`:`<div class="idthumb sm ph"></div>`}
+      <div class="wexp-email">${escapeHtml(w.email)}</div>
+    </div>
+    <div class="wexp-grid">
+      <div><span>Owed now</span><b>${money(w.balance||0,wc)}</b></div>
+      <div><span>Toward ${ccySym(wc)}${BAR_FULL}</span><b>${ccySym(wc)}${w.pending||0}</b></div>
+      <div><span>Results</span><b>${w.confirmed||0}</b></div>
+      <div><span>Click pts</span><b>${w.clickPts||0}</b></div>
+      <div><span>Rank</span><b>#${rankOf(w.id)}</b></div>
+      <div><span>Paid total</span><b>${money(w.paidTotal||0,wc)}</b></div>
+    </div>
+    ${tags?`<div class="wexp-tags">${tags}</div>`:''}
+    <div class="wexp-pay">
+      <div class="wexp-paymeta">
+        ${ w.bank&&(w.bank.holder||w.bank.details||w.bank.method)
+          ? `<div>${escapeHtml(w.bank.holder||'')}${w.bank.country?' · '+escapeHtml(w.bank.country):''}</div>
+             <div class="mut">${escapeHtml(w.bank.method||'')}${w.bank.details?' · '+escapeHtml(w.bank.details):''}</div>
+             ${w.bank.notes?`<div class="mut">${escapeHtml(w.bank.notes)}</div>`:''}`
+          : `<div class="mut">No payment details submitted yet</div>` }
+      </div>
+    </div>
+    <div class="wexp-links"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
+  </div>`;
+}
+function adminWorkers(){
+  const list = ranked();
+  const rows = list.length ? `<div class="wlist">${list.map(w=>{
+    const r = rankOf(w.id); const wc = wcur(w); const open = expandedW===w.id;
+    return `<div class="wrow ${w.banned?'isbanned':''} ${open?'open':''}" data-w="${w.id}">
+      <div class="l1" data-expand="${w.id}"><span class="rank">#${r}</span><span class="wname">${escapeHtml(w.name)}</span><span class="wcode">${w.code}</span><span class="chev">&#9656;</span></div>
+      <div class="wmeta">
+        <div><div class="bal" id="bal-${w.id}"><span class="cur">${ccySym(wc)}</span>${Number(w.balance).toLocaleString()}<span class="ccode">${wc}</span></div>
+          <div class="conf">${w.confirmed} confirmed · ${money(w.paidTotal||0, wc)} paid total${w.note?' · ★ note':''}${w.banned?' · BANNED':(w.warned?' · warned':'')}${w.payoutReq?' · payout requested':''}</div></div>
+        <div class="wbtns">
+          <button class="btn pay sm" data-pay="${w.id}" ${w.balance<=0?'disabled':''}>Pay</button>
+          <button class="btn sm" data-warn="${w.id}">${w.warned?'Unwarn':'Warn'}</button>
+          <button class="btn sm" data-ban="${w.id}">${w.banned?'Unban':'Ban'}</button>
+          <button class="btn rmw sm" data-rmw="${w.id}" title="Remove worker">Remove</button>
+        </div>
+      </div>
+      ${open?workerExpand(w):''}
+    </div>`;}).join("")}</div>`
+    : `<div class="empty">No workers yet. Add one below.</div>`;
+
+  return `<div class="card">
+    <h2>Workers</h2>
+    <div class="sub">Ranked by balance owed. Tap a row to expand · Pay to settle and log it.</div>
+    ${rows}
+  </div>
+  <div class="card">
+    <h2>Add worker</h2>
+    <div class="sub">Email is their login. The gate code ties their results back to them.</div>
+    <div class="field"><label class="fl">Name</label><input id="nwName" placeholder="Carlos Gonzales"></div>
+    <div class="field"><label class="fl">Email (their login)</label><input id="nwEmail" type="email" placeholder="carlos@email.com" autocomplete="off"></div>
+    <div class="field"><label class="fl">Currency (their market)</label><select id="nwCcy">${ccyOptions(DB.config.currency)}</select></div>
+    <div class="field"><label class="fl">ID photo <span class="opt">(at first contact — they'll see it on their page)</span></label>
+      <div class="nwphoto">
+        <img id="nwPhotoPrev" class="idthumb sm" alt="" style="display:none">
+        <div class="idthumb sm ph" id="nwPhotoPh"></div>
+        <label class="btn ghost sm filelbl">Choose photo<input type="file" id="nwPhoto" accept="image/*"></label>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field"><label class="fl">Gate code</label><input id="nwCode" class="mono" placeholder="AUTO"></div>
+      <div class="field"><label class="fl">Payout note</label><input id="nwPay" placeholder="GCash 0917…"></div>
+    </div>
+    <button class="btn" id="addWorker">Add worker</button>
+  </div>`;
+}
+function adminInject(){
+  const opts = DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)} — ${w.code}</option>`).join("");
+  const sym0 = ccySym(wcur(DB.workers[0]||{}));
+  return `<div class="card">
+    <h2>Add to a worker</h2>
+    <div class="sub">A verified result pays ${sym0}${RESULT_VALUE}. Unique-IP clicks are dust: ${CLICKS_PER_POINT} = ${sym0}1. Pick the reason.</div>
+    ${ DB.workers.length ? `
+    <div class="field"><label class="fl">Worker (whom)</label><select id="inW">${opts}</select></div>
+    <div class="field"><label class="fl">Reason</label>
+      <select id="inT">
+        <optgroup label="Verified result — +${sym0}${RESULT_VALUE}">
+          <option value="purchase">Purchase (Stripe)</option>
+          <option value="paid_action">Paid action (sub / booking)</option>
+          <option value="active">Verified-active member</option>
+        </optgroup>
+        <optgroup label="Unverified — dust">
+          <option value="clicks">Unique IP clicks</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="field hide" id="inClicksField"><label class="fl">Unique IP clicks</label><input id="inClicks" type="number" min="0" step="1" placeholder="e.g. 300"></div>
+    <div class="note" id="inHint">${RESULT_TYPES.purchase.hint}</div>
+    <button class="btn" id="doInject">Add +${sym0}${RESULT_VALUE}</button>
+    ` : `<div class="empty">Add a worker first.</div>` }
+  </div>`;
+}
+function adminLog(){
+  const items = [...DB.payments].sort((a,b)=>b.ts-a.ts);
+  return `<div class="card">
+    <h2>Payment log</h2>
+    <div class="sub">Every settled payment, newest first. Wise transfer happens off-app; this is the record.</div>
+    ${ items.length ? `<div class="log">${items.map(p=>{
+      const w=workerById(p.workerId);
+      return `<div class="logitem"><div><b>${w?escapeHtml(w.name):'(removed)'}</b> <span class="t">${fmtDate(p.ts)}</span></div>
+        <div class="a minus">${money(p.amount, w?wcur(w):DB.config.currency)}</div></div>`;
+    }).join("")}</div>` : `<div class="empty">No payments yet.</div>` }
+  </div>`;
+}
+function wireAdmin(){
+  $("#signout").onclick=signOut;
+  wireCcy();
+  wireLinks();
+  wireNotice();
+  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
+  document.querySelectorAll(".seg button").forEach(btn=> btn.onclick=()=>{ adminTab=btn.dataset.tab; render(); });
+  document.querySelectorAll("[data-expand]").forEach(el=> el.onclick=()=>{ const id=el.dataset.expand; expandedW = (expandedW===id?null:id); render(); });
+
+  // Add worker (present in workers section / left column)
+  const npp=$("#nwPhoto"); if(npp) npp.onchange=()=>{ const f=npp.files&&npp.files[0]; if(!f) return; resizePhoto(f,(durl)=>{ newPhoto=durl; const pv=$("#nwPhotoPrev"), ph=$("#nwPhotoPh"); if(pv){ pv.src=durl; pv.style.display=""; } if(ph) ph.style.display="none"; }); };
+  const add=$("#addWorker");
+  if(add) add.onclick=()=>{
+    const name=$("#nwName").value.trim(), email=$("#nwEmail").value.trim();
+    let code=$("#nwCode").value.trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
+    const pay=$("#nwPay").value.trim();
+    const ccy=$("#nwCcy")?$("#nwCcy").value:DB.config.currency;
+    if(!name){ $("#nwName").focus(); return; }
+    if(!/.+@.+\..+/.test(email)){ $("#nwEmail").focus(); return; }
+    if(workerByEmail(email)){ alert("A worker with that email already exists."); return; }
+    if(!code) code=suggestGate(name);
+    if(DB.workers.some(w=>w.code===code)){ alert("That gate code is taken — pick another."); return; }
+    DB.workers.push({ id:"w_"+now().toString(36)+Math.floor(Math.random()*1e3), name, email, code, payout:pay, currency:ccy, photo:newPhoto||"", confirmed:0, balance:0, paidTotal:0, pending:0, clickCarry:0, clickPts:0 });
+    newPhoto=null; save(); render();
+  };
+
+  // Pay buttons (present wherever the worker list is)
+  document.querySelectorAll("[data-pay]").forEach(btn=> btn.onclick=()=> payWorker(btn.dataset.pay, btn));
+
+  // Remove worker (payment history is kept)
+  document.querySelectorAll("[data-rmw]").forEach(btn=> btn.onclick=()=>{
+    const w=workerById(btn.dataset.rmw); if(!w) return;
+    if(!confirm(`Remove ${w.name} from the dashboard?\n\nTheir record and current balance are deleted. Any past payments stay in the payment log.`)) return;
+    DB.workers = DB.workers.filter(x=>x.id!==w.id);
+    save(); render();
+  });
+
+  // Inject (present in inject section / right column)
+  const t=$("#inT");
+  const syncReason=()=>{
+    if(!t) return;
+    const v=t.value, isClicks=(v==="clicks");
+    const cf=$("#inClicksField"); if(cf) cf.classList.toggle("hide", !isClicks);
+    const sym0=ccySym(wcur(workerById($("#inW")&&$("#inW").value) || DB.workers[0] || {}));
+    const h=$("#inHint"); if(h) h.textContent = isClicks
+      ? `${CLICKS_PER_POINT} unique-IP clicks = 1 point = ${sym0}1. Same-IP repeats count once. Live, the referral link does this dedupe and reports points — never raw clicks.`
+      : RESULT_TYPES[v].hint;
+    const di=$("#doInject"); if(di) di.textContent = isClicks ? "Add clicks" : ("Add +"+sym0+RESULT_VALUE);
+  };
+  if(t) t.onchange=syncReason;
+  const inW=$("#inW"); if(inW) inW.onchange=syncReason;
+  syncReason();
+  const di=$("#doInject");
+  if(di) di.onclick=()=>{
+    const w=workerById($("#inW").value); if(!w) return;
+    const v=$("#inT").value;
+    if(v==="clicks"){
+      const clicks=Math.max(0, Math.floor(Number($("#inClicks").value)));
+      if(!clicks){ $("#inClicks").focus(); return; }
+      const carry=(w.clickCarry||0)+clicks;
+      const pts=Math.floor(carry/CLICKS_PER_POINT);
+      w.clickCarry = carry % CLICKS_PER_POINT;
+      if(pts>0){ creditWorker(w, pts, "click"); w.clickPts=(w.clickPts||0)+pts; DB.results.push({ workerId:w.id, type:"click", points:pts, clicks, ts:now() }); }
+    } else {
+      creditWorker(w, RESULT_VALUE, "result");
+      DB.results.push({ workerId:w.id, type:v, points:RESULT_VALUE, ts:now() });
+    }
+    save(); adminTab="workers"; render();
+  };
+
+  // Warn / ban toggles + clear a payout request
+  document.querySelectorAll("[data-ban]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.ban); if(w){ w.banned=!w.banned; if(w.banned) w.warned=false; save(); render(); } });
+  document.querySelectorAll("[data-warn]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.warn); if(w){ w.warned=!w.warned; save(); render(); } });
+  document.querySelectorAll("[data-clrreq]").forEach(b=> b.onclick=()=>{ const w=workerById(b.dataset.clrreq); if(w){ w.payoutReq=false; save(); render(); } });
+}
+function payWorker(id, btn){
+  const w=workerById(id); if(!w || w.balance<=0) return;
+  const amount=w.balance;
+  DB.payments.push({ workerId:id, amount, ts:now() });
+  w.paidTotal=(w.paidTotal||0)+amount; w.balance=0; w.payoutReq=false;
+  save();
+  // transient PAID flash, then re-render
+  const balEl=$("#bal-"+id); if(balEl) balEl.outerHTML='<div class="paidflash">PAID '+money(amount, wcur(w))+'</div>';
+  if(btn){ btn.disabled=true; btn.textContent="Sent"; }
+  setTimeout(render, 1100);
+}
+
+function workerLinks(w){
+  const links = (DB.links||[]).filter(l=>l.workerId===w.id && (l.status||'active')==='active');
+  if(!links.length) return "";
+  const rows = links.map(l=>{
+    const link=l.coded||"";
+    return `<div class="svc">
+      <div class="si">
+        <div class="sn">${escapeHtml(linkLabel(l))}${l.source?`<span class="srctag">${escapeHtml(l.source)}</span>`:''}</div>
+        ${l.desc?`<div class="sd">${escapeHtml(l.desc)}</div>`:''}
+        <div class="sd mono">${escapeHtml(link)}</div>
+        <details class="qrwrap"><summary>Show QR</summary><div class="qrimg">${qrSvg(link)}</div></details>
+        <div class="lkacts">
+          <button class="btn sm" data-share="${escapeHtml(link)}" data-msg="${escapeHtml(shareMsg(l))}">Share</button>
+          <a href="${encodeURI(link)}" target="_blank" rel="noopener">Open</a>
+        </div>
+      </div>
+    </div>`;}).join("");
+  return `<div class="card">
+    <h2>Your link${links.length>1?'s':''}</h2>
+    <div class="note warn">You earn only through ${links.length>1?'these links':'this link'} — traffic or results that don't come through ${links.length>1?'them':'it'} won't count.</div>
+    ${rows}
+  </div>`;
+}
+function resizePhoto(file, cb){
+  const rd=new FileReader();
+  rd.onload=()=>{ const img=new Image(); img.onload=()=>{
+    let wd=img.width, ht=img.height; const max=600; const s=Math.min(1, (max/Math.max(wd,ht))||1);
+    wd=Math.max(1,Math.round(wd*s)); ht=Math.max(1,Math.round(ht*s));
+    const c=document.createElement("canvas"); c.width=wd; c.height=ht;
+    try{ c.getContext("2d").drawImage(img,0,0,wd,ht); cb(c.toDataURL("image/jpeg",0.82)); }catch(e){ cb(rd.result); }
+  }; img.onerror=()=>cb(rd.result); img.src=rd.result; };
+  rd.readAsDataURL(file);
+}
+function workerPayCard(w){
+  const b=w.bank||{};
+  return `<div class="card">
+    <h2>Payment details</h2>
+    <div class="sub">Fill these so the admin can prepare your payout in advance. Only the admin sees them.</div>
+    <div class="payfields">
+      <div class="field"><label class="fl">Full name (as on bank / ID)</label><input id="bkName" value="${escapeHtml(b.holder||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Country</label><input id="bkCountry" value="${escapeHtml(b.country||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Payout method</label><input id="bkMethod" value="${escapeHtml(b.method||'')}" placeholder="Wise / bank / GCash / PayPal" autocomplete="off"></div>
+      <div class="field"><label class="fl">Account / email / IBAN</label><input id="bkDetails" value="${escapeHtml(b.details||'')}" autocomplete="off"></div>
+      <div class="field"><label class="fl">Notes (optional)</label><input id="bkNotes" value="${escapeHtml(b.notes||'')}" autocomplete="off"></div>
+      <button class="btn" id="bkSave">Save details</button>
+    </div>
+  </div>`;
+}
+/* ---------------- WORKER ---------------- */
+function viewWorker(){
+  const w = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
+  if(!w){ return `${topBar("Worker","")}<div class="card"><div class="empty">Your record was removed. Contact the admin.</div></div>`; }
+  const r = rankOf(w.id); const total=DB.workers.length; const wc = wcur(w); const sym = ccySym(wc);
+  const pending = w.pending||0;
+  const pct = Math.round((pending / BAR_FULL) * 100);
+  const myPayments=[...DB.payments].filter(p=>p.workerId===w.id).sort((a,b)=>b.ts-a.ts);
+  const lastPaid = myPayments[0];
+
+  return `${topBar("Worker", escapeHtml(w.name.split(" ")[0]||w.name))}
+  ${demoBanner()}
+  ${ w.banned ? `<div class="banner ban">Your account is banned because of repeated clicks from the same location — earning is stopped. Contact the admin.</div>`
+     : w.warned ? `<div class="banner warnb">Heads up — we're seeing repeated clicks from the same location. If it continues, your account will be banned.</div>` : '' }
+  <div class="whead">
+    <div class="whead-ava">
+      ${w.photo?`<img src="${w.photo}" alt="">`:`<span class="whead-ini">${escapeHtml(initials(w.name))}</span>`}
+      ${r===1?`<span class="whead-badge">★ #1</span>`:''}
+    </div>
+    <div class="whead-meta">
+      <div class="whead-hi">Welcome back</div>
+      <div class="whead-name">${escapeHtml(w.name.split(" ")[0]||w.name)}</div>
+      <div class="whead-mail">${escapeHtml(w.email)}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="selfbal">
+      <div><span class="cur">${sym}</span><span class="amt">${Number(w.balance).toLocaleString()}</span></div>
+      <div class="lbl">Owed to you now · ${wc}</div>
+    </div>
+    <div class="bar-wrap">
+      <div class="bar-top"><span>Toward next ${sym}${BAR_FULL}</span><span>${sym}${pending} / ${sym}${BAR_FULL}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="bar-needle"><i style="left:${pct}%"></i></div>
+      <div class="bar-scale"><span>${sym}0</span><span>${sym}${BAR_FULL}</span></div>
+      <div class="bar-foot">Every full bar banks ${sym}${BAR_FULL} into what you're owed.</div>
+    </div>
+    <div class="divider"></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n">${w.confirmed}</div><div class="k">Results</div></div>
+      <div class="stat"><div class="n">${money(w.paidTotal||0, wc)}</div><div class="k">Paid total</div></div>
+      <div class="stat"><div class="n">#${r}</div><div class="k">Rank</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>What you earn &mdash; focus here</h2>
+    <div class="sub">Two ways to earn. One is worth far more &mdash; spend your hours there.</div>
+    <div class="earn">
+      <div class="earn-row top">
+        <div><div class="en">A real sign-up or a purchase</div><div class="ed">Someone you brought signs up &amp; stays active, or buys.</div></div>
+        <div class="ev">+${sym}${RESULT_VALUE}<span class="evk">each</span></div>
+      </div>
+      <div class="earn-row">
+        <div><div class="en">Traffic clicks <span class="dust">dust</span></div><div class="ed">${CLICKS_PER_POINT} unique visitors (different connections) = ${sym}1.</div></div>
+        <div class="ev">+${sym}1<span class="evk">/ ${CLICKS_PER_POINT} clicks</span></div>
+      </div>
+    </div>
+    <div class="note"><b>One result = ${RESULT_VALUE*CLICKS_PER_POINT} clicks.</b> A single sign-up or purchase pays as much as ${RESULT_VALUE*CLICKS_PER_POINT} unique visitors &mdash; a full ${sym}${BAR_FULL} bar is under 2 results, or ${BAR_FULL*CLICKS_PER_POINT} unique clicks. Chase results, not clicks.</div>
+    <div class="note warn">If we detect excessive repeated clicks from the same location, you may get banned. Bring real, different people &mdash; not the same connection over and over.</div>
+  </div>
+  ${workerLinks(w)}
+  <div class="card">
+    <h2>Payment status</h2>
+    <div class="sub">${ w.balance>0 ? 'You have a balance waiting to be paid.' : lastPaid ? 'All settled. Last payment shown below.' : 'No balance yet — your earnings will show here.' }</div>
+    ${ myPayments.length ? `<div class="log">${myPayments.map(p=>`<div class="logitem"><div><b>Paid</b> <span class="t">${fmtDate(p.ts)}</span></div><div class="a minus">${money(p.amount, wc)}</div></div>`).join("")}</div>` : `<div class="empty">No payments yet.</div>` }
+    <div class="payset">
+      <button class="btn ghost sm ${w.payoutReq?'on':''}" id="reqPay">Pay me when ready</button>
+      <button class="btn ghost sm ${!w.payoutReq?'on':''}" id="holdPay">Let it build up</button>
+    </div>
+  </div>
+  ${workerPayCard(w)}
+  ${personalNoteHtml(w)}
+  ${noticeWorkerHtml()}
+  <div class="foot fline">Sign-ups and purchases pay the most; clicks add only dust.<br>Transfers arrive by Wise after the admin settles.</div>
+  <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${sym}${BAR_FULL} steps as your bar fills.</p>
+  <div class="card sim">
+    <h2>Earning simulation</h2>
+    <div class="sub">A sandbox to feel how each action pays &mdash; and which is fastest. It doesn't touch your real balance.</div>
+    <div class="selfbal">
+      <div><span class="cur">${sym}</span><span class="amt" id="simBal">0</span></div>
+      <div class="lbl">Simulated balance · ${wc}</div>
+    </div>
+    <div style="text-align:center; font-size:12.5px; color:var(--ink-soft); margin-top:6px">each verified result = ${sym}${RESULT_VALUE}</div>
+    <div class="bar-wrap">
+      <div class="bar-top"><span>Toward next ${sym}${BAR_FULL}</span><span id="simTop">${sym}0 / ${sym}${BAR_FULL}</span></div>
+      <div class="bar"><i id="simFill" style="width:0%"></i></div>
+      <div class="bar-needle"><i id="simNeedle" style="left:0%"></i></div>
+      <div class="bar-scale"><span>${sym}0</span><span>${sym}${BAR_FULL}</span></div>
+    </div>
+    <div class="sim-status" id="simStatus">Tap a button to earn.</div>
+    <div class="sim-btns">
+      <button class="btn" id="simBuy">Purchase <small>quickest &mdash; +${sym}${RESULT_VALUE} right away</small></button>
+      <button class="btn ghost" id="simSign">Verified sign-up <small>+${sym}${RESULT_VALUE}, but only if they're active at the day-3 check &mdash; if not, it's a fake sign-up (${sym}0)</small></button>
+      <button class="btn ghost" id="simClick">Click <small>${CLICKS_PER_POINT} unique clicks = ${sym}1 &mdash; dust</small></button>
+    </div>
+    <button class="btn ghost sim-reset" id="simReset">Reset</button>
+  </div>
+  <div class="stamp" aria-hidden="true">
+    <div><span class="stamp-top" id="stampTop">A French Company</span></div>
+    <div><span class="stamp-bot" id="stampBot">Paris · FRANCE</span></div>
+  </div>`;
+}
+function wireWorker(){
+  $("#signout").onclick=signOut;
+  wireCcy();
+  document.querySelectorAll("[data-share]").forEach(b=> b.onclick=()=>{
+    const url=b.dataset.share, text=b.dataset.msg||"Have a look";
+    if(navigator.share){ navigator.share({ title:linkLabel({coded:url})||"Have a look", text, url }).catch(()=>{}); }
+    else { copySvc(b.dataset.msg||url, b); } // no native share (e.g. desktop) -> copy the ready message
+  });
+  const b=$("#dismissBanner"); if(b) b.onclick=()=>{ DB.bannerDismissed=true; save(); render(); };
+  const rp=$("#reqPay"); if(rp) rp.onclick=()=>{ const ww=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(ww){ ww.payoutReq=true; save(); render(); } };
+  const hp=$("#holdPay"); if(hp) hp.onclick=()=>{ const ww=workerById(DB.session.workerId)||workerByEmail(DB.session.email); if(ww){ ww.payoutReq=false; save(); render(); } };
+  const me=()=> workerById(DB.session.workerId)||workerByEmail(DB.session.email);
+  const bs=$("#bkSave"); if(bs) bs.onclick=()=>{ const ww=me(); if(!ww) return; ww.bank={ holder:$("#bkName").value.trim(), country:$("#bkCountry").value.trim(), method:$("#bkMethod").value.trim(), details:$("#bkDetails").value.trim(), notes:$("#bkNotes").value.trim() }; save(); const t=bs.textContent; bs.textContent="Saved"; setTimeout(()=>{ bs.textContent=t; },1100); };
+
+  // Earning simulation (sandbox — does NOT touch the real balance)
+  if($("#simBuy")){
+    const sw = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
+    const sym = ccySym(wcur(sw));
+    let total=0, carry=0, busy=false;
+    const paint=()=>{ const bal=Math.floor(total/BAR_FULL)*BAR_FULL, rem=total%BAR_FULL;
+      $("#simBal").textContent=bal.toLocaleString(); $("#simFill").style.width=rem+"%";
+      $("#simNeedle").style.left=rem+"%"; $("#simTop").textContent=sym+rem+" / "+sym+BAR_FULL; };
+    const status=(m,c)=>{ const s=$("#simStatus"); s.textContent=m; s.className="sim-status"+(c?" "+c:""); };
+    $("#simBuy").onclick=()=>{ if(busy) return; total+=RESULT_VALUE; paint(); status("Purchase — money moved. +"+sym+RESULT_VALUE+" right away.","ok"); };
+    $("#simClick").onclick=()=>{ if(busy) return; carry+=1;
+      if(carry>=CLICKS_PER_POINT){ carry-=CLICKS_PER_POINT; total+=1; paint(); status(CLICKS_PER_POINT+" unique clicks = +"+sym+"1 (dust).","ok"); }
+      else { status(carry+" / "+CLICKS_PER_POINT+" clicks — "+(CLICKS_PER_POINT-carry)+" more for "+sym+"1.","wait"); } };
+    $("#simSign").onclick=()=>{ if(busy) return; busy=true; let d=0;
+      const iv=setInterval(()=>{ d=(d+1)%4; status("Signed up — day-3 active check"+".".repeat(d),"wait"); },300);
+      setTimeout(()=>{ clearInterval(iv); busy=false;
+        if(Math.random()<0.6){ total+=RESULT_VALUE; paint(); status("Active at day 3 — verified. +"+sym+RESULT_VALUE+".","ok"); }
+        else { status("Not active at day 3 — fake sign-up. "+sym+"0 added.","bad"); } },1600); };
+    $("#simReset").onclick=()=>{ if(busy) return; total=0; carry=0; paint(); status("Tap a button to earn."); };
+    paint();
+  }
+
+  // Stamp — stretch "Paris · FRANCE" to exactly the width of "A French Company" above it
+  const fitStamp=()=>{
+    const a=$("#stampTop"), b=$("#stampBot"); if(!a||!b) return;
+    b.style.letterSpacing="0px"; b.style.marginRight="0px";
+    const target=a.getBoundingClientRect().width, natural=b.getBoundingClientRect().width;
+    if(!(target>0)||!(natural>0)) return;
+    const n=Math.max(2, b.textContent.length), ls=(target-natural)/(n-1);
+    b.style.letterSpacing=ls+"px"; b.style.marginRight=(-ls)+"px";
+  };
+  const scheduleFit=()=>{ requestAnimationFrame(fitStamp); setTimeout(fitStamp,160); setTimeout(fitStamp,520); };
+  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(scheduleFit); }
+  scheduleFit();
+}
+
+/* ---------- misc ---------- */
+function signOut(){ DB.session=null; save(); render(); }
+function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function initials(name){ const p=String(name||"").trim().split(/\s+/); return (((p[0]||"")[0]||"")+((p[1]||"")[0]||"")).toUpperCase()||"·"; }
+
+/* seed default currency from device locale on first run (overridable in the header) */
+if(!DB.config.currency){ DB.config.currency = localeCurrency(); save(); }
+/* seed services on first run (admin can edit) */
+/* broadcast notice shown to all workers (admin edits) */
+if(typeof DB.notice !== "string"){ DB.notice = ""; save(); }
+
+/* re-render when crossing the phone/PC breakpoint */
+let _wasWide = isWide();
+window.addEventListener("resize", ()=>{
+  const w = isWide();
+  if(w !== _wasWide){ _wasWide = w; if(DB.session && DB.session.role==="admin") render(); }
+});
+
+render();
+</script>
+</body>
+</html>
