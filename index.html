@@ -39,6 +39,8 @@
   .admin-grid{display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:20px; align-items:start}
   .acol{display:flex; flex-direction:column; min-width:0}
   .wrap.pc .wlist{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px}
+  .wrap.pc .wlist .wrow.open{grid-column:1 / -1}
+  .wrap.pc .wexp-inline input{max-width:440px}
   .wrap.pc .foot{grid-column:1 / -1}
   @media(max-width:859px){ .wrap.pc{max-width:480px; padding:0 18px 64px} .admin-grid{display:block} .wrap.pc .wlist{display:flex; flex-direction:column} }
 
