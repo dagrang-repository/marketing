@@ -3,22 +3,35 @@
    ------------------------------------------------------------
    Production backend behind index.html. Does what the browser
    cannot: email login codes, store records across devices, hold
-   payout details, and auto-credit results from Stripe, Veliane,
-   and ClickMagick.
+   payout details, and auto-credit results from Stripe, owned
+   sites, and the (future) in-house click method.
 
    REWARD MODEL (PH-canonical; 1 point = ₱1):
      - verified result (purchase / paid action / day-3-active
        signup) = 70 points (₱70).
-     - traffic = dust: 3 unique-IP clicks = 1 point (₱1).
+     - traffic = dust: 3 unique clicks = 1 point (₱1).
    Balance banks in ₱100 steps (BAR_FULL); the remainder is the
    worker's "needle". BALANCE IS MONOTONIC: it only ever goes up
    until a payout zeroes it. Refund/cancel after a credit does
    NOT reverse the balance (ABSORB — no clawback). Bad behaviour
-   is handled by a ban, never by reducing earned balance. Excessive
-   same-IP clicks for one worker auto-WARN then auto-BAN.
+   is handled by a ban, never by reducing earned balance.
 
-   Attribution: the GATE CODE is the single key — it is the
-   ClickMagick sub-id, the Stripe metadata, and the Veliane gate.
+   FRAUD DETECTION = GEO-SPREAD (built later with the in-house
+   click method — STUB here for now):
+     The signal is SPREAD vs REPETITION. Clicks scattered across
+     many locations are legitimate at ANY volume — the link is
+     spreading. Clicks piling up inside one ~200 m radius mean the
+     link is NOT spreading — that is fake/farmed. (Same-IP counting
+     is inadequate: a family compound has many phones/IPs in one
+     place.) Threshold: WARN at 150 clustered clicks within 200 m
+     (red notice on the worker's board), AUTO-BAN at 300. This needs
+     per-click geo-coordinates that only the in-house click method
+     will supply, so the live engine is a STUB until that exists.
+     The static red warning already in the worker UI is the live
+     deterrent meanwhile. Earned balance is never reduced (ban only).
+
+   Attribution: the GATE CODE is the single key — the click
+   sub-id, the Stripe metadata, and the owned-site gate.
 
    SESSION: does NOT expire on a device (persistent token). The
    login CODE expires in 10 minutes.
@@ -31,18 +44,14 @@
      MAIL_FROM              verified sender
      STRIPE_WEBHOOK_SECRET  whsec_…
      VELIANE_SECRET         shared secret in x-veliane-secret
-     CLICKMAGICK_SECRET     shared secret in x-clickmagick-secret (postback)
-     CLICKMAGICK_API_KEY    for the nightly add-only reconcile (optional)
-     WARN_IP_CLICKS         same-IP clicks/worker that auto-WARN (default 20)
-     BAN_IP_CLICKS          same-IP clicks/worker that auto-BAN  (default 50)
-     STRIPE_CREDIT          "1" to credit via Stripe instead of ClickMagick (default off)
+     STRIPE_CREDIT          "1" to credit purchases via Stripe (default off)
      HOLD_DAYS              days before a signup is rechecked (default 3)
      ACTIVE_WINDOW_DAYS     "still active" = activity within N days at recheck (default 2)
    ============================================================ */
 
 const BAR_FULL = 100;       // points that bank ₱100 to the payable balance
 const RESULT_VALUE = 70;    // one verified result = 70 points (₱70)
-const CLICKS_PER_POINT = 3; // 3 unique-IP clicks = 1 point (₱1) — dust
+const CLICKS_PER_POINT = 3; // 3 unique clicks = 1 point (₱1) — dust
 
 const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), {
@@ -140,12 +149,6 @@ async function seen(env, id) {
   if (await env.STORE.get(k)) return true;
   await env.STORE.put(k, "1", { expirationTtl: 120 * 24 * 3600 }); // ~chargeback window
   return false;
-}
-/* short, non-reversible key for an IP (per-worker same-location counting) */
-async function ipHash(ip) {
-  if (!ip) return "";
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(ip)));
-  return [...new Uint8Array(buf)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /* ---------- credit (monotonic banking; banned earns nothing) ---------- */
@@ -326,7 +329,7 @@ export default {
         return json({ ok: true });
       }
 
-      /* ---- admin: inject by reason (result = +₱70, or unique-IP clicks = dust) ---- */
+      /* ---- admin: inject by reason (result = +₱70, or unique clicks = dust) ---- */
       if (p === "/inject" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
@@ -362,9 +365,8 @@ export default {
       }
 
       /* ---- Stripe webhook: completed purchase -> +₱70 to the gate owner ----
-         OFF by default: ClickMagick governs conversions, so the same sale is
-         not credited twice. Set STRIPE_CREDIT=1 ONLY if you instead drop the
-         ClickMagick conversion pixel. Refund/cancel is ABSORB (never reversed). */
+         OFF by default. Set STRIPE_CREDIT=1 to credit purchases here. Refund/
+         cancel is ABSORB (never reversed). */
       if (p === "/stripe/webhook" && req.method === "POST") {
         const payload = await req.text();
         const ok = await verifyStripe(env, payload, req.headers.get("stripe-signature"));
@@ -379,7 +381,7 @@ export default {
         return json({ received: true });
       }
 
-      /* ---- Veliane intake (ALTERNATIVE): Veliane ran its OWN day-3 check and
+      /* ---- Owned-site intake (ALTERNATIVE): the site ran its OWN day-3 check and
          posts only confirmed-active members -> +₱70 each. Use EITHER this OR the
          worker.js-owned flow below (/veliane/signup + /veliane/activity), never
          both for the same member. Body: { gate, delta, members? } */
@@ -399,7 +401,7 @@ export default {
         return json({ ok: true, credited: n, balance: w.balance });
       }
 
-      /* ---- Veliane signup (worker.js OWNS the day-3 recheck) ----
+      /* ---- Owned-site signup (worker.js OWNS the day-3 recheck) ----
          Fire on registration. Records the signup as PENDING (uncredited).
          worker.js holds HOLD_DAYS, then its cron reverifies activity and
          credits +₱70 only if still active (else skips). Idempotent by memberId.
@@ -419,7 +421,7 @@ export default {
         return json({ ok: true, pending: true });
       }
 
-      /* ---- Veliane activity ping (feeds the day-3 recheck) ----
+      /* ---- Owned-site activity ping (feeds the day-3 recheck) ----
          Fire whenever a pending member is active (e.g., on login). Refreshes
          lastActive so the cron can tell active from dormant. Ignored once
          resolved. Body: { memberId } or { members: [ids] } */
@@ -436,14 +438,14 @@ export default {
         return json({ ok: true, updated: n });
       }
 
-      /* ---- ClickMagick postback: live clicks/conversions ----
-         Point ClickMagick's S2S postback here. Map their macros to:
-           gate   = the sub-id you set per worker link (e.g. {subid})
+      /* ---- Tracker postback (generic intake; the in-house click method posts here) ----
+         Endpoint name is a legacy label and will be renamed when the in-house
+         click method is built. Map the tracker's fields to:
+           gate   = the sub-id set per worker link
            event  = "click" | "conversion"
-           unique = "1" for a real unique click (ClickMagick filters bots)
-           id     = a unique click/event id ({clickid}) for idempotency
-           ip     = visitor IP ({ip}) — used for same-location auto warn/ban
-         Confirm exact macro names in ClickMagick's docs. */
+           unique = "1" for a real unique click (the tracker filters bots)
+           id     = a unique click/event id for idempotency
+           coords = reserved for the future GEO-SPREAD fraud check (200 m rule) */
       if (p === "/clickmagick/event" && req.method === "POST") {
         if ((req.headers.get("x-clickmagick-secret") || "") !== (env.CLICKMAGICK_SECRET || "___"))
           return json({ error: "unauthorized" }, 401);
@@ -457,29 +459,20 @@ export default {
         if (event === "conversion") {
           await creditWorker(env, w, RESULT_VALUE, "result");
         } else if (event === "click" && unique) {
-          // Same-location guard: count this worker's clicks per IP over a rolling 7-day
-          // window. ClickMagick already strips bots; this catches a real person farming
-          // from one place — auto-WARN, then auto-BAN if it keeps going. Never reduces balance.
-          const ipKey = await ipHash(body.ip);
-          if (ipKey && !w.banned) {
-            const warnAt = parseInt(env.WARN_IP_CLICKS || "20", 10);
-            const banAt  = parseInt(env.BAN_IP_CLICKS  || "50", 10);
-            const k = "ipc:" + w.id + ":" + ipKey;
-            const c = (parseInt((await env.STORE.get(k)) || "0", 10)) + 1;
-            await env.STORE.put(k, String(c), { expirationTtl: 7 * 24 * 3600 });
-            if (c >= banAt) { w.banned = true; w.warned = false; w.banReason = "repeated clicks from the same location"; await saveWorker(env, w); }
-            else if (c >= warnAt && !w.warned) { w.warned = true; await saveWorker(env, w); }
-          }
-          await addUniqueClicks(env, w, 1); // no-op if the check above just banned them
+          // FRAUD DETECTION (GEO-SPREAD) — STUB. Built with the in-house click
+          // method: concentration inside one ~200 m radius (link not spreading)
+          // -> WARN 150 / BAN 300. Needs per-click geo-coordinates, not yet
+          // available, so no auto warn/ban fires here. Spread = always legit.
+          await addUniqueClicks(env, w, 1);
         }
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
 
       /* ---- Owned-site click (self-counted) ----
-         For sites YOU own (e.g. Veliane). The site's /r/<code> route fires this once
-         per visitor-per-day (it builds `id`) after its own bot check — SAME secret as the
-         rest of Veliane (x-veliane-secret). Dust (3 unique = 1 pt) + per-IP auto warn/ban.
-         Never reduces balance. Body: { gate, id, ip, src } */
+         For sites YOU own. The site's /r/<code> route fires this once per
+         visitor-per-day (it builds `id`) after its own bot check — SAME secret
+         as the rest of the owned site (x-veliane-secret). Dust (3 unique = 1 pt).
+         Fraud detection is GEO-SPREAD, built later (STUB). Body: { gate, id, coords?, src } */
       if (p === "/owned/click" && req.method === "POST") {
         if ((req.headers.get("x-veliane-secret") || "") !== (env.VELIANE_SECRET || "___"))
           return json({ error: "unauthorized" }, 401);
@@ -488,16 +481,9 @@ export default {
         if (await seen(env, "oc:" + id)) return json({ ok: true, dup: true });
         const w = await workerByGate(env, gate);
         if (!w) return json({ error: "no_gate" }, 404);
-        const ipKey = await ipHash(body.ip);
-        if (ipKey && !w.banned) {
-          const warnAt = parseInt(env.WARN_IP_CLICKS || "20", 10);
-          const banAt  = parseInt(env.BAN_IP_CLICKS  || "50", 10);
-          const k = "ipc:" + w.id + ":" + ipKey;
-          const c = (parseInt((await env.STORE.get(k)) || "0", 10)) + 1;
-          await env.STORE.put(k, String(c), { expirationTtl: 7 * 24 * 3600 });
-          if (c >= banAt) { w.banned = true; w.warned = false; w.banReason = "repeated clicks from the same location"; await saveWorker(env, w); }
-          else if (c >= warnAt && !w.warned) { w.warned = true; await saveWorker(env, w); }
-        }
+        // FRAUD DETECTION (GEO-SPREAD) — STUB. Built with the in-house click
+        // method: concentration inside one ~200 m radius -> WARN 150 / BAN 300.
+        // Needs per-click geo-coordinates, not yet available, so nothing fires here.
         await addUniqueClicks(env, w, 1);
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
@@ -527,8 +513,9 @@ export default {
     }
     await kvPut(env, "idx:pending", keep);
 
-    // (2) ClickMagick add-only reconcile — TODO: call their reporting API, compare to a
-    //     stored "totals:<gate>" snapshot, credit ONLY positive deltas (never subtract).
+    // (2) Add-only reconcile — TODO when the in-house click method exists: pull its
+    //     totals, compare to a stored "totals:<gate>" snapshot, credit ONLY positive
+    //     deltas (never subtract). Balance stays monotonic.
     return;
   },
 };

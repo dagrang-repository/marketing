@@ -13,15 +13,18 @@
 #                             Used by /veliane/signup, /veliane/activity, /veliane/intake AND
 #                             /owned/click — this single secret covers every site you own.
 #      STRIPE_WEBHOOK_SECRET  whsec_...  (only if you credit purchases via Stripe)
-#      CLICKMAGICK_SECRET     only if a NON-owned site's tracker posts to /clickmagick/event
+#      CLICKMAGICK_SECRET     intake secret for the generic tracker endpoint /clickmagick/event
+#                             (legacy name — the in-house click method renames it later).
 #
 # Optional tunables (have safe defaults in code — set only to override):
-#      STRIPE_CREDIT          "1" to credit purchases on Stripe webhook (default OFF, so the
-#                             owned-site / tracker pipe governs conversions and never double-credits)
-#      WARN_IP_CLICKS         per-IP clicks (7-day window) before a worker is auto-warned (default 20)
-#      BAN_IP_CLICKS          per-IP clicks before a worker is auto-banned (default 50)
+#      STRIPE_CREDIT          "1" to credit purchases on the Stripe webhook (default OFF)
 #      HOLD_DAYS              days a signup is held before the day-3 active recheck (default 3)
 #      ACTIVE_WINDOW_DAYS     "active" = seen within this many days at recheck (default 2)
+#
+# FRAUD DETECTION is GEO-SPREAD (built with the in-house click method): clicks
+# scattered across locations are legit at any volume; clicks concentrated in one
+# ~200 m radius are fake — WARN 150 / BAN 300. It needs per-click geo-coordinates,
+# so it is a STUB in worker.js for now. There are NO per-IP click tunables.
 #
 # NOTE: sessions do NOT expire on a device (persistent token), so there is no SESSION_TTL_HOURS.
 
@@ -35,5 +38,5 @@ id = "7351968bf87d41979df8a0ebe99cabc7"
 
 # Non-secret defaults may go here if you prefer (optional). Secrets must use `wrangler secret put`.
 # [vars]
-# WARN_IP_CLICKS = "20"
-# BAN_IP_CLICKS  = "50"
+# HOLD_DAYS = "3"
+# ACTIVE_WINDOW_DAYS = "2"
