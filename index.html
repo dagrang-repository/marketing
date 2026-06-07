@@ -83,6 +83,7 @@
   .note b{color:var(--accent-ink)}
   .note.warn{color:var(--warn); background:#faeeda; border-color:#f3dcb6}
   .note.warn b{color:var(--warn)}
+  .note.good{background:#e7f5ee; border-color:#bfe3d0}
   .demo-banner{font-size:13px; color:var(--warn); background:#faeeda; border:1px solid #f3dcb6;
     border-radius:var(--r-sm); padding:9px 12px; margin:0 0 14px; display:flex; gap:8px; align-items:flex-start}
   .demo-banner button{margin-left:auto; background:none;border:none;color:var(--warn);cursor:pointer;font-size:15px;line-height:1;padding:0}
@@ -604,10 +605,11 @@ function buildTrackingLink(baseUrl, gate, owned, source){
     if(src) out += "?src=" + encodeURIComponent(src);
     return out;
   }
-  // Site you don't own: gate rides as the tracker sub-id; source as a second sub-id.
-  u.searchParams.set("s1", gate);
-  if(src) u.searchParams.set("s2", src);
-  return u.toString();
+  // Site you don't own: route through your /go redirector so the click is counted on your
+  // side, then forwarded to the destination (you can't run code on a site you don't own).
+  let out = API.replace(/\/$/, "") + "/go/" + encodeURIComponent(gate) + "?u=" + encodeURIComponent(u.toString());
+  if(src) out += "&src=" + encodeURIComponent(src);
+  return out;
 }
 function srcTag(s){ return (s||"").trim().toLowerCase().replace(/[^a-z0-9_-]/g,""); }
 const qrSvg=(function(){
@@ -1270,6 +1272,7 @@ function viewWorker(){
       </div>
     </div>
     <div class="note"><b>One result = ${RESULT_VALUE*CLICKS_PER_POINT} clicks.</b> A single sign-up or purchase pays as much as ${RESULT_VALUE*CLICKS_PER_POINT} unique visitors &mdash; a full ${sym}${BAR_FULL} bar is under 2 results, or ${BAR_FULL*CLICKS_PER_POINT} unique clicks. Chase results, not clicks.</div>
+    <div class="note good"><b>Best practice &mdash; target where people buy.</b> Aim your links at the <b>USA, Canada, Europe, the UK, and Australia</b>, where visitors make real purchases. Those turn into ${sym}${RESULT_VALUE} results and your points climb fast. Pushing clicks only in your own area earns little dust &mdash; and piling clicks from one place can eventually get you flagged.</div>
     <div class="note warn">If we detect excessive repeated clicks from the same location, you may get banned. Bring real, different people &mdash; not the same connection over and over.</div>
   </div>
   ${workerLinks(w)}
