@@ -44,7 +44,10 @@
   .wrap.pc .foot{grid-column:1 / -1}
   @media(max-width:859px){ .wrap.pc{max-width:480px; padding:0 18px 64px} .admin-grid{display:block} .wrap.pc .wlist{display:flex; flex-direction:column} }
 
-  header.top{padding:26px 2px 18px; display:flex; align-items:flex-end; justify-content:space-between; gap:12px}
+  header.top{padding:26px 2px 18px; display:grid; grid-template-columns:1fr auto 1fr; align-items:flex-end; gap:12px}
+  header.top>.brand{justify-self:start}
+  header.top>.pickwrap{justify-self:center; display:flex; align-items:flex-end; gap:10px}
+  header.top>.who{justify-self:end}
   .brand{font-family:var(--serif); font-weight:500; font-size:26px; letter-spacing:-.02em; line-height:1}
   .brand small{display:block; font-family:var(--sans); font-size:12.5px; font-weight:500; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft); margin-top:7px}
   .who{font-size:13px; color:var(--ink-soft); text-align:right; max-width:150px}
@@ -338,8 +341,38 @@ function localeCurrency(){
   }catch(e){}
   return "USD";
 }
-function ccySym(code){ return (CURRENCIES[code]||CURRENCIES.USD).s; }
-function money(amount, code){ return ccySym(code) + Number(amount||0).toLocaleString(); }
+function rate(code){
+  const r = (DB.fx && DB.fx.rates) ? DB.fx.rates[code] : null;
+  return (typeof r === "number" && r > 0) ? r : (code === "PHP" ? 1 : null);
+}
+function ccySym(code){
+  if(CURRENCIES[code]) return CURRENCIES[code].s;
+  try{ const p=new Intl.NumberFormat(undefined,{style:"currency",currency:code}).formatToParts(0); const s=p.find(x=>x.type==="currency"); return s?s.value:code; }catch(e){ return code; }
+}
+// pesos are the canonical amount; convert FROM ₱ to the display currency at the live rate.
+function money(pesos, code){
+  const r = rate(code), useCode = (r==null) ? "PHP" : code;
+  const val = (r==null) ? Number(pesos||0) : Number(pesos||0) * r;
+  try{
+    return new Intl.NumberFormat(undefined,{ style:"currency", currency:useCode,
+      minimumFractionDigits: useCode==="PHP"?0:undefined,
+      maximumFractionDigits: useCode==="PHP"?0:undefined }).format(val);
+  }catch(e){ return ccySym(useCode) + val.toLocaleString(undefined,{maximumFractionDigits:2}); }
+}
+// converted number only (no symbol) — for the big split-symbol balance display
+function fmtNum(pesos, code){
+  const r = rate(code), useCode = (r==null) ? "PHP" : code;
+  const val = (r==null) ? Number(pesos||0) : Number(pesos||0) * r;
+  return val.toLocaleString(undefined, useCode==="PHP" ? {maximumFractionDigits:0} : {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function ccyOptions(sel){
+  const rates = (DB.fx && DB.fx.rates) || { PHP:1 };
+  let codes = Object.keys(rates); if(!codes.includes("PHP")) codes.push("PHP");
+  codes.sort();
+  const pin = ["PHP","USD","EUR","GBP","CAD","AUD"].filter(c=>codes.includes(c));
+  const order = [...pin, ...codes.filter(c=>!pin.includes(c))];
+  return order.map(c=>`<option value="${c}" ${c===sel?'selected':''}>${c}${CURRENCIES[c]?' '+CURRENCIES[c].s:''}</option>`).join("");
+}
 
 const RESULT_TYPES = {
   purchase:    { label:"Purchase (Stripe)",        tag:"pur",         hint:"A completed checkout — money moved." },
@@ -365,7 +398,7 @@ async function api(path, method="GET", body){
 }
 
 /* in-memory cache, hydrated from the Worker; never persisted to localStorage */
-let DB = { config:{ currency:"PHP" }, workers:[], payments:[], sites:[], links:[], notice:"", session:null, meRank:0, meTotal:0 };
+let DB = { config:{ currency:"PHP" }, workers:[], payments:[], sites:[], links:[], notice:"", session:null, meRank:0, meTotal:0, fx:{ base:"PHP", rates:{ PHP:1 } } };
 function save(){ /* no-op: the Worker is the source of truth */ }
 
 async function hydrate(){
@@ -377,6 +410,7 @@ async function hydrate(){
     DB.sites    = st.sites    || [];
     DB.links    = st.links    || [];
     DB.payments = st.payments || [];
+    DB.fx       = st.fx || DB.fx;
     DB.session  = { role:"admin", email:EMAIL, workerId:null };
   } else {
     const me = await api("/me");
@@ -390,6 +424,7 @@ async function hydrate(){
     DB.payments = me.payments || [];
     DB.notice   = me.notice || "";
     DB.meRank   = me.rank || 1; DB.meTotal = me.total || 1;
+    DB.fx       = me.fx || DB.fx;
     DB.session  = { role:"worker", workerId:self.id, email:self.email };
   }
 }
@@ -432,9 +467,6 @@ function render(){
   else { app.innerHTML = viewWorker(); wireWorker(); }
 }
 
-function ccyOptions(sel){
-  return Object.entries(CURRENCIES).map(([c,v])=>`<option value="${c}" ${c===sel?'selected':''}>${c} ${v.s}</option>`).join("");
-}
 function currencyPicker(){
   if(!DB.session) return "";
   if(DB.session.role==="worker"){
@@ -455,10 +487,8 @@ function wireCcy(){
 }
 function topBar(roleLabel, nameLabel){
   return `<header class="top">
-    <div class="brandwrap">
-      <div class="brand">Marketing<small>Payment foundation</small></div>
-      ${currencyPicker()}
-    </div>
+    <div class="brand">Marketing<small>Payment foundation</small></div>
+    <div class="pickwrap">${currencyPicker()}</div>
     <div class="who">${roleLabel}<b>${nameLabel}</b>
       ${DB.session?'<button class="signout" id="signout">Sign out</button>':''}
     </div>
@@ -779,7 +809,7 @@ function adminLinks(){
   // --- generated links grouped by worker ---
   const byWorker = {}; links.forEach(l=>{ (byWorker[l.workerId]=byWorker[l.workerId]||[]).push(l); });
   const groups = DB.workers.filter(w=>byWorker[w.id]&&byWorker[w.id].length).map(w=>{
-    const sym=ccySym(wcur(w));
+    const wc=wcur(w);
     const rows = byWorker[w.id].map(l=>{
       const link=l.coded||"", st=l.stats||{}, status=l.status||'active', hot=l.id===lastGenId?" justgen":"";
       return `<div class="svc${hot}">
@@ -787,7 +817,7 @@ function adminLinks(){
           <div class="sn">${escapeHtml(linkLabel(l))}${l.source?`<span class="srctag">${escapeHtml(l.source)}</span>`:''}${status!=='active'?`<span class="lstatus ${status}">${status}</span>`:''}${hot?` <span class="gtag">just generated</span>`:''}</div>
           ${l.desc?`<div class="sd">${escapeHtml(l.desc)}</div>`:''}
           <div class="sd mono">${escapeHtml(link)}</div>
-          <div class="lkstats">Clicks ${st.clicks??'—'} · Sign-ups ${st.signups??'—'} · Sales ${st.purchases??'—'} · ${sym}${st.earned??'—'}</div>
+          <div class="lkstats">Clicks ${st.clicks??'—'} · Sign-ups ${st.signups??'—'} · Sales ${st.purchases??'—'} · ${st.earned==null?'—':money(st.earned,wc)}</div>
           <details class="qrwrap"><summary>Show QR</summary><div class="qrimg">${qrSvg(link)}</div></details>
           <div class="lkacts">
             <button data-copy="${escapeHtml(link)}">Copy link</button>
@@ -940,7 +970,7 @@ function workerExpand(w){
     </div>
     <div class="wexp-grid">
       <div><span>Owed now</span><b>${money(w.balance||0,wc)}</b></div>
-      <div><span>Toward ${ccySym(wc)}${BAR_FULL}</span><b>${ccySym(wc)}${w.pending||0}</b></div>
+      <div><span>Toward ${money(BAR_FULL,wc)}</span><b>${money(w.pending||0,wc)}</b></div>
       <div><span>Results</span><b>${w.confirmed||0}</b></div>
       <div><span>Click pts</span><b>${w.clickPts||0}</b></div>
       <div><span>Rank</span><b>#${rankOf(w.id)}</b></div>
@@ -983,7 +1013,7 @@ function adminWorkers(){
     return `<div class="wrow ${w.banned?'isbanned':''} ${open?'open':''}" data-w="${w.id}">
       <div class="l1" data-expand="${w.id}"><span class="rank">#${r}</span><span class="wname">${escapeHtml(w.name)}</span><span class="wcode">${w.code}</span><span class="chev">&#9656;</span></div>
       <div class="wmeta">
-        <div><div class="bal" id="bal-${w.id}"><span class="cur">${ccySym(wc)}</span>${Number(w.balance).toLocaleString()}<span class="ccode">${wc}</span></div>
+        <div><div class="bal" id="bal-${w.id}">${money(w.balance,wc)}<span class="ccode">${wc}</span></div>
           <div class="conf">${w.confirmed} confirmed · ${money(w.paidTotal||0, wc)} paid total${w.note?' · ★ note':''}${w.banned?' · BANNED':(w.warned?' · warned':'')}${w.payoutReq?' · payout requested':''}</div></div>
         <div class="wbtns">
           <button class="btn pay sm" data-pay="${w.id}" ${w.balance<=0?'disabled':''}>Pay</button>
@@ -1024,15 +1054,15 @@ function adminWorkers(){
 }
 function adminInject(){
   const opts = DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)} — ${w.code}</option>`).join("");
-  const sym0 = ccySym(wcur(DB.workers[0]||{}));
+  const rcy = DB.config.currency || "PHP";
   return `<div class="card">
     <h2>Add to a worker</h2>
-    <div class="sub">A verified result pays ${sym0}${RESULT_VALUE}. Unique-IP clicks are dust: ${CLICKS_PER_POINT} = ${sym0}1. Pick the reason.</div>
+    <div class="sub">A verified result pays ${money(RESULT_VALUE,rcy)}. Unique-IP clicks are dust: ${CLICKS_PER_POINT} = ${money(1,rcy)}. Pick the reason.</div>
     ${ DB.workers.length ? `
     <div class="field"><label class="fl">Worker (whom)</label><select id="inW">${opts}</select></div>
     <div class="field"><label class="fl">Reason</label>
       <select id="inT">
-        <optgroup label="Verified result — +${sym0}${RESULT_VALUE}">
+        <optgroup label="Verified result — +${money(RESULT_VALUE,rcy)}">
           <option value="purchase">Purchase (Stripe)</option>
           <option value="paid_action">Paid action (sub / booking)</option>
           <option value="active">Verified-active member</option>
@@ -1044,7 +1074,7 @@ function adminInject(){
     </div>
     <div class="field hide" id="inClicksField"><label class="fl">Unique IP clicks</label><input id="inClicks" type="number" min="0" step="1" placeholder="e.g. 300"></div>
     <div class="note" id="inHint">${RESULT_TYPES.purchase.hint}</div>
-    <button class="btn" id="doInject">Add +${sym0}${RESULT_VALUE}</button>
+    <button class="btn" id="doInject">Add +${money(RESULT_VALUE,rcy)}</button>
     ` : `<div class="empty">Add a worker first.</div>` }
   </div>`;
 }
@@ -1108,11 +1138,11 @@ function wireAdmin(){
     if(!t) return;
     const v=t.value, isClicks=(v==="clicks");
     const cf=$("#inClicksField"); if(cf) cf.classList.toggle("hide", !isClicks);
-    const sym0=ccySym(wcur(workerById($("#inW")&&$("#inW").value) || DB.workers[0] || {}));
+    const wc=wcur(workerById($("#inW")&&$("#inW").value) || DB.workers[0] || {});
     const h=$("#inHint"); if(h) h.textContent = isClicks
-      ? `${CLICKS_PER_POINT} unique-IP clicks = 1 point = ${sym0}1. Same-IP repeats count once. Live, the referral link does this dedupe and reports points — never raw clicks.`
+      ? `${CLICKS_PER_POINT} unique-IP clicks = 1 point = ${money(1,wc)}. Same-IP repeats count once. Live, the referral link does this dedupe and reports points — never raw clicks.`
       : RESULT_TYPES[v].hint;
-    const di=$("#doInject"); if(di) di.textContent = isClicks ? "Add clicks" : ("Add +"+sym0+RESULT_VALUE);
+    const di=$("#doInject"); if(di) di.textContent = isClicks ? "Add clicks" : ("Add +"+money(RESULT_VALUE,wc));
   };
   if(t) t.onchange=syncReason;
   const inW=$("#inW"); if(inW) inW.onchange=syncReason;
@@ -1241,15 +1271,15 @@ function viewWorker(){
   </div>
   <div class="card">
     <div class="selfbal">
-      <div><span class="cur">${sym}</span><span class="amt">${Number(w.balance).toLocaleString()}</span></div>
+      <div><span class="cur">${sym}</span><span class="amt">${fmtNum(w.balance,wc)}</span></div>
       <div class="lbl">Owed to you now · ${wc}</div>
     </div>
     <div class="bar-wrap">
-      <div class="bar-top"><span>Toward next ${sym}${BAR_FULL}</span><span>${sym}${pending} / ${sym}${BAR_FULL}</span></div>
+      <div class="bar-top"><span>Toward next ${money(BAR_FULL,wc)}</span><span>${money(pending,wc)} / ${money(BAR_FULL,wc)}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="bar-needle"><i style="left:${pct}%"></i></div>
-      <div class="bar-scale"><span>${sym}0</span><span>${sym}${BAR_FULL}</span></div>
-      <div class="bar-foot">Every full bar banks ${sym}${BAR_FULL} into what you're owed.</div>
+      <div class="bar-scale"><span>${money(0,wc)}</span><span>${money(BAR_FULL,wc)}</span></div>
+      <div class="bar-foot">Every full bar banks ${money(BAR_FULL,wc)} into what you're owed.</div>
     </div>
     <div class="divider"></div>
     <div class="stat-row">
@@ -1264,15 +1294,15 @@ function viewWorker(){
     <div class="earn">
       <div class="earn-row top">
         <div><div class="en">A real sign-up or a purchase</div><div class="ed">Someone you brought signs up &amp; stays active, or buys.</div></div>
-        <div class="ev">+${sym}${RESULT_VALUE}<span class="evk">each</span></div>
+        <div class="ev">+${money(RESULT_VALUE,wc)}<span class="evk">each</span></div>
       </div>
       <div class="earn-row">
-        <div><div class="en">Traffic clicks <span class="dust">dust</span></div><div class="ed">${CLICKS_PER_POINT} unique visitors (different connections) = ${sym}1.</div></div>
-        <div class="ev">+${sym}1<span class="evk">/ ${CLICKS_PER_POINT} clicks</span></div>
+        <div><div class="en">Traffic clicks <span class="dust">dust</span></div><div class="ed">${CLICKS_PER_POINT} unique visitors (different connections) = ${money(1,wc)}.</div></div>
+        <div class="ev">+${money(1,wc)}<span class="evk">/ ${CLICKS_PER_POINT} clicks</span></div>
       </div>
     </div>
-    <div class="note"><b>One result = ${RESULT_VALUE*CLICKS_PER_POINT} clicks.</b> A single sign-up or purchase pays as much as ${RESULT_VALUE*CLICKS_PER_POINT} unique visitors &mdash; a full ${sym}${BAR_FULL} bar is under 2 results, or ${BAR_FULL*CLICKS_PER_POINT} unique clicks. Chase results, not clicks.</div>
-    <div class="note good"><b>Best practice &mdash; target where people buy.</b> Aim your links at the <b>USA, Canada, Europe, the UK, and Australia</b>, where visitors make real purchases. Those turn into ${sym}${RESULT_VALUE} results and your points climb fast. Pushing clicks only in your own area earns little dust &mdash; and piling clicks from one place can eventually get you flagged.</div>
+    <div class="note"><b>One result = ${RESULT_VALUE*CLICKS_PER_POINT} clicks.</b> A single sign-up or purchase pays as much as ${RESULT_VALUE*CLICKS_PER_POINT} unique visitors &mdash; a full ${money(BAR_FULL,wc)} bar is under 2 results, or ${BAR_FULL*CLICKS_PER_POINT} unique clicks. Chase results, not clicks.</div>
+    <div class="note good"><b>Best practice &mdash; target where people buy.</b> Aim your links at the <b>USA, Canada, Europe, the UK, and Australia</b>, where visitors make real purchases. Those turn into ${money(RESULT_VALUE,wc)} results and your points climb fast. Pushing clicks only in your own area earns little dust &mdash; and piling clicks from one place can eventually get you flagged.</div>
     <div class="note warn">If we detect excessive repeated clicks from the same location, you may get banned. Bring real, different people &mdash; not the same connection over and over.</div>
   </div>
   ${workerLinks(w)}
@@ -1289,26 +1319,26 @@ function viewWorker(){
   ${personalNoteHtml(w)}
   ${noticeWorkerHtml()}
   <div class="foot fline">Sign-ups and purchases pay the most; clicks add only dust.<br>Transfers arrive by Wise after the admin settles.</div>
-  <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${sym}${BAR_FULL} steps as your bar fills.</p>
+  <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${money(BAR_FULL,wc)} steps as your bar fills.</p>
   <div class="card sim">
     <h2>Earning simulation</h2>
     <div class="sub">A sandbox to feel how each action pays &mdash; and which is fastest. It doesn't touch your real balance.</div>
     <div class="selfbal">
-      <div><span class="cur">${sym}</span><span class="amt" id="simBal">0</span></div>
+      <div><span class="cur">${sym}</span><span class="amt" id="simBal">${fmtNum(0,wc)}</span></div>
       <div class="lbl">Simulated balance · ${wc}</div>
     </div>
-    <div style="text-align:center; font-size:12.5px; color:var(--ink-soft); margin-top:6px">each verified result = ${sym}${RESULT_VALUE}</div>
+    <div style="text-align:center; font-size:12.5px; color:var(--ink-soft); margin-top:6px">each verified result = ${money(RESULT_VALUE,wc)}</div>
     <div class="bar-wrap">
-      <div class="bar-top"><span>Toward next ${sym}${BAR_FULL}</span><span id="simTop">${sym}0 / ${sym}${BAR_FULL}</span></div>
+      <div class="bar-top"><span>Toward next ${money(BAR_FULL,wc)}</span><span id="simTop">${money(0,wc)} / ${money(BAR_FULL,wc)}</span></div>
       <div class="bar"><i id="simFill" style="width:0%"></i></div>
       <div class="bar-needle"><i id="simNeedle" style="left:0%"></i></div>
-      <div class="bar-scale"><span>${sym}0</span><span>${sym}${BAR_FULL}</span></div>
+      <div class="bar-scale"><span>${money(0,wc)}</span><span>${money(BAR_FULL,wc)}</span></div>
     </div>
     <div class="sim-status" id="simStatus">Tap a button to earn.</div>
     <div class="sim-btns">
-      <button class="btn" id="simBuy">Purchase <small>quickest &mdash; +${sym}${RESULT_VALUE} right away</small></button>
-      <button class="btn ghost" id="simSign">Verified sign-up <small>+${sym}${RESULT_VALUE}, but only if they're active at the day-3 check &mdash; if not, it's a fake sign-up (${sym}0)</small></button>
-      <button class="btn ghost" id="simClick">Click <small>${CLICKS_PER_POINT} unique clicks = ${sym}1 &mdash; dust</small></button>
+      <button class="btn" id="simBuy">Purchase <small>quickest &mdash; +${money(RESULT_VALUE,wc)} right away</small></button>
+      <button class="btn ghost" id="simSign">Verified sign-up <small>+${money(RESULT_VALUE,wc)}, but only if they're active at the day-3 check &mdash; if not, it's a fake sign-up (${money(0,wc)})</small></button>
+      <button class="btn ghost" id="simClick">Click <small>${CLICKS_PER_POINT} unique clicks = ${money(1,wc)} &mdash; dust</small></button>
     </div>
     <button class="btn ghost sim-reset" id="simReset">Reset</button>
   </div>
@@ -1338,21 +1368,21 @@ function wireWorker(){
   // Earning simulation (sandbox — does NOT touch the real balance)
   if($("#simBuy")){
     const sw = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
-    const sym = ccySym(wcur(sw));
+    const wc = wcur(sw);
     let total=0, carry=0, busy=false;
     const paint=()=>{ const bal=Math.floor(total/BAR_FULL)*BAR_FULL, rem=total%BAR_FULL;
-      $("#simBal").textContent=bal.toLocaleString(); $("#simFill").style.width=rem+"%";
-      $("#simNeedle").style.left=rem+"%"; $("#simTop").textContent=sym+rem+" / "+sym+BAR_FULL; };
+      $("#simBal").textContent=fmtNum(bal,wc); $("#simFill").style.width=rem+"%";
+      $("#simNeedle").style.left=rem+"%"; $("#simTop").textContent=money(rem,wc)+" / "+money(BAR_FULL,wc); };
     const status=(m,c)=>{ const s=$("#simStatus"); s.textContent=m; s.className="sim-status"+(c?" "+c:""); };
-    $("#simBuy").onclick=()=>{ if(busy) return; total+=RESULT_VALUE; paint(); status("Purchase — money moved. +"+sym+RESULT_VALUE+" right away.","ok"); };
+    $("#simBuy").onclick=()=>{ if(busy) return; total+=RESULT_VALUE; paint(); status("Purchase — money moved. +"+money(RESULT_VALUE,wc)+" right away.","ok"); };
     $("#simClick").onclick=()=>{ if(busy) return; carry+=1;
-      if(carry>=CLICKS_PER_POINT){ carry-=CLICKS_PER_POINT; total+=1; paint(); status(CLICKS_PER_POINT+" unique clicks = +"+sym+"1 (dust).","ok"); }
-      else { status(carry+" / "+CLICKS_PER_POINT+" clicks — "+(CLICKS_PER_POINT-carry)+" more for "+sym+"1.","wait"); } };
+      if(carry>=CLICKS_PER_POINT){ carry-=CLICKS_PER_POINT; total+=1; paint(); status(CLICKS_PER_POINT+" unique clicks = +"+money(1,wc)+" (dust).","ok"); }
+      else { status(carry+" / "+CLICKS_PER_POINT+" clicks — "+(CLICKS_PER_POINT-carry)+" more for "+money(1,wc)+".","wait"); } };
     $("#simSign").onclick=()=>{ if(busy) return; busy=true; let d=0;
       const iv=setInterval(()=>{ d=(d+1)%4; status("Signed up — day-3 active check"+".".repeat(d),"wait"); },300);
       setTimeout(()=>{ clearInterval(iv); busy=false;
-        if(Math.random()<0.6){ total+=RESULT_VALUE; paint(); status("Active at day 3 — verified. +"+sym+RESULT_VALUE+".","ok"); }
-        else { status("Not active at day 3 — fake sign-up. "+sym+"0 added.","bad"); } },1600); };
+        if(Math.random()<0.6){ total+=RESULT_VALUE; paint(); status("Active at day 3 — verified. +"+money(RESULT_VALUE,wc)+".","ok"); }
+        else { status("Not active at day 3 — fake sign-up. "+money(0,wc)+" added.","bad"); } },1600); };
     $("#simReset").onclick=()=>{ if(busy) return; total=0; carry=0; paint(); status("Tap a button to earn."); };
     paint();
   }
