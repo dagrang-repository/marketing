@@ -64,6 +64,9 @@
 
   .card{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:18px; margin-bottom:14px}
   .card h2{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; margin-bottom:3px}
+  .card.sim>summary{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; cursor:pointer; list-style:none; display:flex; align-items:baseline; gap:8px}
+  .card.sim>summary::-webkit-details-marker{display:none}
+  .card.sim[open]>summary{margin-bottom:6px}
   .card .sub{font-size:13.5px; color:var(--ink-soft); margin-bottom:14px}
 
   label.fl{display:block; font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin:0 0 6px 2px}
@@ -1201,7 +1204,10 @@ function payWorker(id, btn){
 
 function workerLinks(w){
   const links = (DB.links||[]).filter(l=>l.workerId===w.id && (l.status||'active')==='active');
-  if(!links.length) return "";
+  if(!links.length) return `<div class="card">
+    <h2>Your link</h2>
+    <div class="empty">Your link appears here once the admin sets it up &mdash; it's how everything you bring gets counted. Ask the admin if you don't have one yet.</div>
+  </div>`;
   const rows = links.map(l=>{
     const link=l.coded||"";
     return `<div class="svc">
@@ -1272,7 +1278,7 @@ function viewWorker(){
   const myPayments=[...DB.payments].filter(p=>p.workerId===w.id).sort((a,b)=>b.ts-a.ts);
   const lastPaid = myPayments[0];
 
-  return `${topBar("Worker", escapeHtml(w.name.split(" ")[0]||w.name))}
+  return `${topBar("Worker", "")}
   ${demoBanner()}
   ${ w.banned ? `<div class="banner ban">Your account is banned because of repeated clicks from the same location — earning is stopped. Contact the admin.</div>`
      : w.warned ? `<div class="banner warnb">Heads up — we're seeing repeated clicks from the same location. If it continues, your account will be banned.</div>` : '' }
@@ -1336,8 +1342,8 @@ function viewWorker(){
     </div>
   </div>
   ${workerPayCard(w)}
-  <div class="card sim">
-    <h2>Earning simulation</h2>
+  <details class="card sim">
+    <summary class="simsum">Earning simulation <span class="opt">tap to open</span></summary>
     <div class="sub">A sandbox to feel how each action pays &mdash; and which is fastest. It doesn't touch your real balance.</div>
     <div class="selfbal">
       <div><span class="cur">${sym}</span><span class="amt" id="simBal">${fmtNum(0,wc)}</span></div>
@@ -1357,7 +1363,7 @@ function viewWorker(){
       <button class="btn ghost" id="simClick">Click <small>${CLICKS_PER_POINT} unique clicks = ${money(1,wc)} &mdash; dust</small></button>
     </div>
     <button class="btn ghost sim-reset" id="simReset">Reset</button>
-  </div>
+  </details>
   <div class="foot fline">Sign-ups and purchases pay the most; clicks add only dust.<br>Transfers arrive by Wise after the admin settles.</div>
   <p class="finenote">Clicks earn a little &mdash; dust. The real money is sign-ups and purchases you bring. A handful of good results beats thousands of clicks. You're paid in ${money(BAR_FULL,wc)} steps as your bar fills.</p>
   <div class="stamp" aria-hidden="true">
