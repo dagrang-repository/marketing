@@ -68,11 +68,10 @@
   .card.sim>summary::-webkit-details-marker{display:none}
   .card.sim[open]>summary{margin-bottom:6px}
   .simsum-row{display:flex; align-items:baseline; gap:8px}
-  .sim-peek{align-self:center; overflow:hidden; height:24px; line-height:1; font-size:46px; margin-top:2px; opacity:.55; pointer-events:none; animation:simpeek 2.6s ease-in-out infinite; -webkit-mask-image:linear-gradient(#000 60%,transparent); mask-image:linear-gradient(#000 60%,transparent)}
-  .sim-peek .amt{font-family:var(--mono); font-size:46px; font-weight:600; letter-spacing:-.02em; line-height:1; color:var(--ink)}
+  .sim-peek{align-self:center; overflow:hidden; height:26px; line-height:1; font-size:46px; margin-top:2px; pointer-events:none; -webkit-mask-image:linear-gradient(#000 62%,transparent); mask-image:linear-gradient(#000 62%,transparent)}
+  .sim-peek .amt{display:inline-block; font-family:var(--mono); font-size:46px; font-weight:600; letter-spacing:-.02em; line-height:1; color:var(--ink); opacity:.6; animation:simpeek 2.6s ease-in-out infinite}
   .card.sim[open] .sim-peek{display:none}
-  @keyframes simpeek{0%,100%{height:20px; opacity:.5} 50%{height:34px; opacity:.82}}
-  @media (prefers-reduced-motion:reduce){ .sim-peek{animation:none; height:26px} }
+  @keyframes simpeek{0%,100%{transform:translateY(0); opacity:.5} 50%{transform:translateY(-7px); opacity:.85}}
   .card .sub{font-size:13.5px; color:var(--ink-soft); margin-bottom:14px}
 
   label.fl{display:block; font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin:0 0 6px 2px}
