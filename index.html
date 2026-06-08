@@ -64,9 +64,15 @@
 
   .card{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:18px; margin-bottom:14px}
   .card h2{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; margin-bottom:3px}
-  .card.sim>summary{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; cursor:pointer; list-style:none; display:flex; align-items:baseline; gap:8px}
+  .card.sim>summary{font-family:var(--serif); font-weight:500; font-size:18px; letter-spacing:-.01em; cursor:pointer; list-style:none; display:flex; flex-direction:column; gap:3px}
   .card.sim>summary::-webkit-details-marker{display:none}
   .card.sim[open]>summary{margin-bottom:6px}
+  .simsum-row{display:flex; align-items:baseline; gap:8px}
+  .sim-peek{align-self:center; overflow:hidden; height:.42em; line-height:1; margin-top:1px; opacity:.5; pointer-events:none; animation:simpeek 2.8s ease-in-out infinite; -webkit-mask-image:linear-gradient(#000 56%,transparent); mask-image:linear-gradient(#000 56%,transparent)}
+  .sim-peek .amt{font-family:var(--mono); font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink)}
+  .card.sim[open] .sim-peek{display:none}
+  @keyframes simpeek{0%,100%{height:.40em; opacity:.42} 50%{height:.66em; opacity:.74}}
+  @media (prefers-reduced-motion:reduce){ .sim-peek{animation:none; height:.5em} }
   .card .sub{font-size:13.5px; color:var(--ink-soft); margin-bottom:14px}
 
   label.fl{display:block; font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin:0 0 6px 2px}
@@ -533,7 +539,7 @@ function topBar(roleLabel, nameLabel){
     <div class="brand">Marketing<small>Payment foundation</small></div>
     <div class="pickwrap">${langPicker()}${currencyPicker()}</div>
     <div class="who">${roleLabel}<b>${nameLabel}</b>
-      ${DB.session?'<button class="signout" id="signout">${t("signout")}</button>':''}
+      ${DB.session?'<button class="signout" id="signout">'+t("signout")+'</button>':''}
     </div>
   </header>`;
 }
@@ -1366,7 +1372,7 @@ function viewWorker(){
   </div>
   ${workerPayCard(w)}
   <details class="card sim">
-    <summary class="simsum">${t("sim_summary")} <span class="opt">${t("sim_tap_open")}</span></summary>
+    <summary class="simsum"><span class="simsum-row">${t("sim_summary")} <span class="opt">${t("sim_tap_open")}</span></span><span class="sim-peek" aria-hidden="true"><span class="amt">${fmtNum(0,wc)}</span></span></summary>
     <div class="sub">${t("sim_sub")}</div>
     <div class="selfbal">
       <div><span class="cur">${sym}</span><span class="amt" id="simBal">${fmtNum(0,wc)}</span></div>
