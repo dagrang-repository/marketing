@@ -311,10 +311,31 @@
   .qrfail{font:11px/1.4 var(--mono,monospace); color:var(--danger); margin-top:9px}
   .srctag{font-size:10.5px; border-radius:999px; padding:1px 8px; margin-left:7px; color:var(--accent-ink); border:1px solid var(--accent); background:var(--accent-soft); font-weight:500}
   .hide{display:none !important}
+  /* ---- How-this-works guide popup ---- */
+  .guide-cta{text-align:center; margin:2px 0 16px}
+  .guide-link{font-family:var(--serif); font-size:14px; color:var(--accent-ink); background:var(--accent-soft); border:1px solid var(--line); border-radius:999px; padding:8px 18px; cursor:pointer}
+  .guide-link:hover{background:#d7ebe3}
+  .guide-ov{display:none; position:fixed; inset:0; z-index:120; background:rgba(28,27,23,.55); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); align-items:flex-start; justify-content:center; padding:24px 14px; overflow:auto}
+  .guide-ov.open{display:flex}
+  .guide-card{position:relative; width:100%; max-width:600px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px 24px 30px; box-shadow:0 24px 60px rgba(0,0,0,.28); margin:auto}
+  .guide-x{position:absolute; top:12px; right:12px; width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:var(--paper); color:var(--ink-soft); font-size:16px; line-height:1; cursor:pointer}
+  .guide-x:hover{color:var(--ink)}
+  .guide-body{font-family:var(--serif); color:var(--ink); font-size:15px; line-height:1.6}
+  .guide-body h1{font-size:24px; line-height:1.2; margin:2px 36px 8px 0; letter-spacing:-.01em}
+  .guide-body h2{font-size:17px; margin:22px 0 6px; letter-spacing:-.01em}
+  .guide-body p{margin:0 0 10px}
+  .guide-body p.muted{color:var(--ink-soft); font-size:13px}
+  .guide-body code{font-family:var(--mono); font-size:13px; background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:2px 7px; word-break:break-all}
+  .guide-body ul,.guide-body ol{margin:0 0 10px; padding-left:20px}
+  .guide-body li{margin:0 0 7px}
+  .guide-body table{width:100%; border-collapse:collapse; margin:0 0 12px; font-size:14px}
+  .guide-body th,.guide-body td{border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top}
+  .guide-body th{background:var(--accent-soft); color:var(--accent-ink); font-weight:600}
 </style>
 </head>
 <body>
 <div class="wrap" id="app"></div>
+<div class="guide-ov" id="guideOv"><div class="guide-card" role="dialog" aria-modal="true" aria-label="How this works"><button class="guide-x" id="guideClose" type="button" aria-label="Close">✕</button><div class="guide-body" id="guideBody"></div></div></div>
 
 <script>
 "use strict";
@@ -497,6 +518,223 @@ let newPhoto = null; // ID photo staged in the add-worker form
 
 /* ============================================================ render ============================================================ */
 function isWide(){ return window.matchMedia("(min-width:860px)").matches; }
+/* ---- "How this works" worker guide (popup; reuses curLang; English fallback for km/lo/ka/mn) ---- */
+const GUIDE = {
+"en":{label:"How this works",html:`<h1>How this works</h1>
+<p>Your account is live. Your link is ready. You can start earning right now.</p>
+<h2>Your link = your money</h2>
+<p>You get a personal link, like:</p>
+<p><code>https://thewebsite.com/r/YOURCODE</code></p>
+<p>Every time someone clicks it, you earn. Every time someone signs up or buys through it, you earn bigger. Share it anywhere — group chats, Facebook, Instagram, WhatsApp, even a printed flyer.</p>
+<h2>Two ways to earn</h2>
+<table><thead><tr><th>What happens</th><th>You earn</th></tr></thead><tbody>
+<tr><td>Someone buys or signs up through your link</td><td><b>+₱70</b> — the real money</td></tr>
+<tr><td>3 different people click your link</td><td><b>+₱1</b> — dust, but it adds up</td></tr>
+</tbody></table>
+<p>A single purchase pays as much as <b>210 clicks</b>. So chase results — real people who actually use the site. Clicks are just a bonus while you wait.</p>
+<p class="muted">Amounts are shown in pesos here; your dashboard shows them in your own currency.</p>
+<h2>Your progress bar</h2>
+<p>When you log in, you'll see a bar that fills as you earn. Every click and every purchase moves it by itself — you never need to refresh or check. Once it reaches <b>₱100</b>, that money is banked and ready to be paid.</p>
+<p>And it only ever goes <b>up</b>: once you've earned something, it's yours. The bar never drops.</p>
+<h2>How it flows</h2>
+<ol>
+<li>You share your link in a group or a post.</li>
+<li>Someone clicks it → the system counts it and remembers that you sent them.</li>
+<li>If they buy or sign up later — even days later → you get <b>+₱70</b>.</li>
+<li>Your bar fills up.</li>
+<li>When you're ready to be paid, the admin settles it.</li>
+</ol>
+<p>Everything happens automatically. No screenshots, no reporting, no following up.</p>
+<h2>Try the sandbox</h2>
+<p>Tap the <b>“Earning simulation”</b> section on your dashboard. It's a playground that shows you exactly how earning works — without touching your real balance. Tap <b>Purchase</b> → see +₱70. Tap <b>Click</b> → see +₱1. You'll get it in ten seconds.</p>
+<h2>Best practices (to earn fast)</h2>
+<ul>
+<li><b>Share in the right places.</b> The USA, Canada, Europe, the UK and Australia buy the most. Spread your links across different countries, not just one area.</li>
+<li><b>Don't pile clicks into one city.</b> The system watches where clicks come from. Too many from a single city earns you a warning first, then a ban if it keeps going. The limits are generous — but real. Spreading across cities and countries keeps you safe and your earnings healthy.</li>
+<li><b>Bring real, different people.</b> Don't spam the same link into the same chat over and over — the system can tell when it's the same people clicking.</li>
+<li><b>Add context.</b> A bare link gets ignored. “Hey, this site helps you find cheaper flights” gets clicked. Tell people what they're getting.</li>
+<li><b>Share every few days, not just once.</b> Momentum matters.</li>
+</ul>
+<h2>Getting paid</h2>
+<p>When your account balance goes up in value, the admin sees it and pays you to the banking details on your profile — so make sure those are correct. If anything needs fixing, we'll let you know and you can update it.</p>
+<h2>One rule</h2>
+<p>Don't click your own link from different devices, and don't use bots or fake traffic. The system knows real people from fake ones. Keep it clean, keep it real, and you'll keep earning.</p>
+<h2>You're ready</h2>
+<p>Sit somewhere comfortable, open your dashboard, look at your link. Share it once and watch the bar move.</p>
+<p>That's the whole job. <b>Welcome aboard.</b></p>`},
+"fil":{label:"Paano ito gumagana",html:`<h1>Paano ito gumagana</h1>
+<p>Aktibo na ang iyong account. Handa na ang iyong link. Pwede ka nang kumita ngayon.</p>
+<h2>Ang iyong link = pera mo</h2>
+<p>May personal kang link, tulad nito:</p>
+<p><code>https://thewebsite.com/r/YOURCODE</code></p>
+<p>Tuwing may magke-click nito, kumikita ka. Tuwing may magsa-sign up o bibili sa pamamagitan nito, mas malaki ang kita mo. Ibahagi ito kahit saan — group chats, Facebook, Instagram, WhatsApp, kahit nakaimprentang flyer.</p>
+<h2>Dalawang paraan para kumita</h2>
+<table><thead><tr><th>Ano ang nangyayari</th><th>Kita mo</th></tr></thead><tbody>
+<tr><td>May bumili o nag-sign up sa pamamagitan ng link mo</td><td><b>+₱70</b> — ang totoong pera</td></tr>
+<tr><td>3 magkakaibang tao ang nag-click sa link mo</td><td><b>+₱1</b> — alikabok, pero naiipon</td></tr>
+</tbody></table>
+<p>Ang isang pagbili ay kasimbigat ng <b>210 click</b>. Kaya habulin ang resulta — totoong taong gumagamit ng site. Bonus lang ang mga click habang naghihintay ka.</p>
+<p class="muted">Nasa pesos ang ipinapakita rito; sa iyong dashboard ay nasa sarili mong pera.</p>
+<h2>Ang iyong progress bar</h2>
+<p>Pag nag-log in ka, may makikita kang bar na napupuno habang kumikita ka. Bawat click at bawat pagbili ay naggagalaw nito nang kusa — hindi mo kailangang mag-refresh o tingnan. Pagdating sa <b>₱100</b>, naka-bank na ang perang iyon at handa nang bayaran.</p>
+<p>At pataas lang ito lagi: kapag kumita ka na, sa iyo na iyon. Hindi bumababa ang bar.</p>
+<h2>Paano ito dumadaloy</h2>
+<ol>
+<li>Ibinabahagi mo ang link mo sa isang grupo o post.</li>
+<li>May magke-click nito → binibilang ito ng sistema at naaalala na ikaw ang nagpadala.</li>
+<li>Kung bibili o magsa-sign up sila mamaya — kahit makalipas ang ilang araw → makakakuha ka ng <b>+₱70</b>.</li>
+<li>Napupuno ang bar mo.</li>
+<li>Kapag handa ka nang bayaran, inaayos ito ng admin.</li>
+</ol>
+<p>Awtomatiko ang lahat. Walang screenshot, walang pag-uulat, walang follow-up.</p>
+<h2>Subukan ang sandbox</h2>
+<p>I-tap ang <b>“Earning simulation”</b> na seksyon sa dashboard mo. Isa itong playground na nagpapakita kung paano gumagana ang pagkita — nang hindi ginagalaw ang totoo mong balanse. I-tap ang <b>Purchase</b> → makikita +₱70. I-tap ang <b>Click</b> → makikita +₱1. Mauunawaan mo sa loob ng sampung segundo.</p>
+<h2>Mga best practice (para mabilis kumita)</h2>
+<ul>
+<li><b>Mag-share sa tamang lugar.</b> Ang USA, Canada, Europe, UK at Australia ang pinakamadalas bumili. Ikalat ang mga link mo sa iba't ibang bansa, hindi sa iisang lugar lang.</li>
+<li><b>Huwag ipunin ang mga click sa iisang lungsod.</b> Binabantayan ng sistema kung saan nanggagaling ang mga click. Masyadong marami mula sa iisang lungsod ay babala muna, tapos ban kung magpapatuloy. Maluwag ang mga limitasyon — pero totoo. Ang pagkalat sa iba't ibang lungsod at bansa ang nagpapanatiling ligtas ka at malusog ang kita mo.</li>
+<li><b>Magdala ng totoo at magkakaibang tao.</b> Huwag paulit-ulit na i-spam ang parehong link sa parehong chat — kaya ng sistemang malaman kung pareho lang ang mga taong nagke-click.</li>
+<li><b>Magbigay ng konteksto.</b> Ang link na walang paliwanag ay hindi pinapansin. Ang “Uy, nakakatulong ang site na ito para makahanap ng mas murang flight” ay napi-click. Sabihin sa tao kung ano ang makukuha nila.</li>
+<li><b>Mag-share kada ilang araw, hindi minsan lang.</b> Mahalaga ang momentum.</li>
+</ul>
+<h2>Pagbabayad</h2>
+<p>Kapag tumaas ang halaga ng balanse mo, nakikita ito ng admin at babayaran ka sa banking details na nasa profile mo — kaya siguraduhing tama ang mga iyon. Kung may kailangang ayusin, sasabihin namin sa iyo at pwede mong i-update.</p>
+<h2>Isang patakaran</h2>
+<p>Huwag i-click ang sarili mong link mula sa iba't ibang device, at huwag gumamit ng bot o pekeng trapiko. Alam ng sistema ang totoong tao sa peke. Panatilihing malinis, panatilihing totoo, at patuloy kang kikita.</p>
+<h2>Handa ka na</h2>
+<p>Umupo sa komportableng lugar, buksan ang dashboard mo, tingnan ang link mo. Ibahagi ito minsan at panoorin ang paggalaw ng bar.</p>
+<p>Iyon na ang buong trabaho. <b>Maligayang pagsali.</b></p>`},
+"es-419":{label:"Cómo funciona",html:`<h1>Cómo funciona</h1>
+<p>Tu cuenta está activa. Tu enlace está listo. Puedes empezar a ganar ahora mismo.</p>
+<h2>Tu enlace = tu dinero</h2>
+<p>Recibes un enlace personal, así:</p>
+<p><code>https://thewebsite.com/r/YOURCODE</code></p>
+<p>Cada vez que alguien hace clic, ganas. Cada vez que alguien se registra o compra a través de él, ganas más. Compártelo donde sea — chats de grupo, Facebook, Instagram, WhatsApp, hasta un volante impreso.</p>
+<h2>Dos formas de ganar</h2>
+<table><thead><tr><th>Qué pasa</th><th>Ganas</th></tr></thead><tbody>
+<tr><td>Alguien compra o se registra por tu enlace</td><td><b>+₱70</b> — el dinero real</td></tr>
+<tr><td>3 personas distintas hacen clic en tu enlace</td><td><b>+₱1</b> — polvo, pero suma</td></tr>
+</tbody></table>
+<p>Una sola compra paga tanto como <b>210 clics</b>. Así que persigue resultados — personas reales que de verdad usan el sitio. Los clics son solo un extra mientras esperas.</p>
+<p class="muted">Los montos se muestran en pesos aquí; tu panel los muestra en tu propia moneda.</p>
+<h2>Tu barra de progreso</h2>
+<p>Cuando inicias sesión, verás una barra que se llena a medida que ganas. Cada clic y cada compra la mueven solos — nunca necesitas actualizar ni revisar. Al llegar a <b>₱100</b>, ese dinero queda guardado y listo para pagarse.</p>
+<p>Y solo sube: una vez que ganas algo, es tuyo. La barra nunca baja.</p>
+<h2>Cómo fluye</h2>
+<ol>
+<li>Compartes tu enlace en un grupo o una publicación.</li>
+<li>Alguien hace clic → el sistema lo cuenta y recuerda que tú lo enviaste.</li>
+<li>Si compra o se registra después — incluso días después → recibes <b>+₱70</b>.</li>
+<li>Tu barra se llena.</li>
+<li>Cuando quieras cobrar, el admin lo liquida.</li>
+</ol>
+<p>Todo pasa automáticamente. Sin capturas, sin reportar, sin dar seguimiento.</p>
+<h2>Prueba el sandbox</h2>
+<p>Toca la sección <b>“Earning simulation”</b> en tu panel. Es un espacio de práctica que te muestra exactamente cómo se gana — sin tocar tu saldo real. Toca <b>Purchase</b> → ves +₱70. Toca <b>Click</b> → ves +₱1. Lo entenderás en diez segundos.</p>
+<h2>Buenas prácticas (para ganar rápido)</h2>
+<ul>
+<li><b>Comparte en los lugares correctos.</b> EE. UU., Canadá, Europa, Reino Unido y Australia son los que más compran. Distribuye tus enlaces en distintos países, no solo en una zona.</li>
+<li><b>No acumules clics en una sola ciudad.</b> El sistema vigila de dónde vienen los clics. Demasiados desde una misma ciudad te dan primero una advertencia, y luego un bloqueo si sigue. Los límites son generosos — pero reales. Repartir entre ciudades y países te mantiene a salvo y tus ganancias sanas.</li>
+<li><b>Trae personas reales y distintas.</b> No hagas spam del mismo enlace en el mismo chat una y otra vez — el sistema nota cuando son las mismas personas haciendo clic.</li>
+<li><b>Da contexto.</b> Un enlace sin nada se ignora. “Oye, este sitio te ayuda a encontrar vuelos más baratos” sí recibe clics. Dile a la gente qué obtiene.</li>
+<li><b>Comparte cada pocos días, no una sola vez.</b> El impulso importa.</li>
+</ul>
+<h2>Cómo cobrar</h2>
+<p>Cuando el valor de tu saldo sube, el admin lo ve y te paga a los datos bancarios de tu perfil — así que asegúrate de que sean correctos. Si algo necesita corregirse, te avisamos y puedes actualizarlo.</p>
+<h2>Una regla</h2>
+<p>No hagas clic en tu propio enlace desde distintos dispositivos, y no uses bots ni tráfico falso. El sistema distingue a las personas reales de las falsas. Mantenlo limpio, mantenlo real, y seguirás ganando.</p>
+<h2>Estás listo</h2>
+<p>Siéntate en un lugar cómodo, abre tu panel, mira tu enlace. Compártelo una vez y observa cómo se mueve la barra.</p>
+<p>Ese es todo el trabajo. <b>Bienvenido a bordo.</b></p>`},
+"id":{label:"Cara kerjanya",html:`<h1>Cara kerjanya</h1>
+<p>Akun Anda aktif. Tautan Anda siap. Anda bisa mulai menghasilkan sekarang juga.</p>
+<h2>Tautan Anda = uang Anda</h2>
+<p>Anda mendapat tautan pribadi, seperti ini:</p>
+<p><code>https://thewebsite.com/r/YOURCODE</code></p>
+<p>Setiap kali seseorang mengekliknya, Anda menghasilkan. Setiap kali seseorang mendaftar atau membeli melaluinya, Anda menghasilkan lebih besar. Bagikan di mana saja — obrolan grup, Facebook, Instagram, WhatsApp, bahkan selebaran cetak.</p>
+<h2>Dua cara menghasilkan</h2>
+<table><thead><tr><th>Apa yang terjadi</th><th>Anda dapat</th></tr></thead><tbody>
+<tr><td>Seseorang membeli atau mendaftar lewat tautan Anda</td><td><b>+₱70</b> — uang sungguhan</td></tr>
+<tr><td>3 orang berbeda mengeklik tautan Anda</td><td><b>+₱1</b> — debu, tapi terkumpul</td></tr>
+</tbody></table>
+<p>Satu pembelian membayar sebanyak <b>210 klik</b>. Jadi kejar hasil — orang nyata yang benar-benar memakai situs. Klik hanya bonus sambil Anda menunggu.</p>
+<p class="muted">Jumlah ditampilkan dalam peso di sini; dasbor Anda menampilkannya dalam mata uang Anda sendiri.</p>
+<h2>Bilah kemajuan Anda</h2>
+<p>Saat Anda masuk, Anda akan melihat bilah yang terisi seiring Anda menghasilkan. Setiap klik dan setiap pembelian menggerakkannya sendiri — Anda tidak perlu menyegarkan atau memeriksa. Begitu mencapai <b>₱100</b>, uang itu disimpan dan siap dibayar.</p>
+<p>Dan hanya pernah naik: begitu Anda menghasilkan sesuatu, itu milik Anda. Bilah tidak pernah turun.</p>
+<h2>Bagaimana alurnya</h2>
+<ol>
+<li>Anda membagikan tautan Anda di grup atau unggahan.</li>
+<li>Seseorang mengekliknya → sistem menghitungnya dan mengingat bahwa Anda yang mengirimnya.</li>
+<li>Jika mereka membeli atau mendaftar nanti — bahkan beberapa hari kemudian → Anda mendapat <b>+₱70</b>.</li>
+<li>Bilah Anda terisi.</li>
+<li>Saat Anda siap dibayar, admin menyelesaikannya.</li>
+</ol>
+<p>Semuanya terjadi otomatis. Tanpa tangkapan layar, tanpa melapor, tanpa menindaklanjuti.</p>
+<h2>Coba sandbox</h2>
+<p>Ketuk bagian <b>“Earning simulation”</b> di dasbor Anda. Ini area bermain yang menunjukkan persis bagaimana penghasilan bekerja — tanpa menyentuh saldo asli Anda. Ketuk <b>Purchase</b> → lihat +₱70. Ketuk <b>Click</b> → lihat +₱1. Anda akan paham dalam sepuluh detik.</p>
+<h2>Praktik terbaik (agar cepat menghasilkan)</h2>
+<ul>
+<li><b>Bagikan di tempat yang tepat.</b> AS, Kanada, Eropa, Inggris, dan Australia paling banyak membeli. Sebarkan tautan Anda ke berbagai negara, bukan hanya satu area.</li>
+<li><b>Jangan menumpuk klik di satu kota.</b> Sistem mengawasi dari mana klik berasal. Terlalu banyak dari satu kota memberi Anda peringatan dulu, lalu pemblokiran jika berlanjut. Batasnya longgar — tapi nyata. Menyebar ke berbagai kota dan negara menjaga Anda aman dan penghasilan Anda sehat.</li>
+<li><b>Bawa orang nyata yang berbeda.</b> Jangan spam tautan yang sama ke obrolan yang sama berulang kali — sistem tahu saat orang yang sama yang mengeklik.</li>
+<li><b>Beri konteks.</b> Tautan kosong diabaikan. “Hai, situs ini membantu Anda menemukan tiket pesawat lebih murah” akan diklik. Beri tahu orang apa yang mereka dapatkan.</li>
+<li><b>Bagikan tiap beberapa hari, bukan sekali saja.</b> Momentum itu penting.</li>
+</ul>
+<h2>Cara dibayar</h2>
+<p>Saat nilai saldo Anda naik, admin melihatnya dan membayar Anda ke detail bank di profil Anda — jadi pastikan detail itu benar. Jika ada yang perlu diperbaiki, kami akan memberi tahu dan Anda bisa memperbaruinya.</p>
+<h2>Satu aturan</h2>
+<p>Jangan klik tautan Anda sendiri dari perangkat berbeda, dan jangan gunakan bot atau lalu lintas palsu. Sistem tahu mana orang nyata dan mana yang palsu. Jaga tetap bersih, jaga tetap nyata, dan Anda akan terus menghasilkan.</p>
+<h2>Anda siap</h2>
+<p>Duduklah di tempat yang nyaman, buka dasbor Anda, lihat tautan Anda. Bagikan sekali dan lihat bilahnya bergerak.</p>
+<p>Itulah seluruh pekerjaannya. <b>Selamat bergabung.</b></p>`},
+"vi":{label:"Cách hoạt động",html:`<h1>Cách hoạt động</h1>
+<p>Tài khoản của bạn đã hoạt động. Liên kết của bạn đã sẵn sàng. Bạn có thể bắt đầu kiếm tiền ngay bây giờ.</p>
+<h2>Liên kết của bạn = tiền của bạn</h2>
+<p>Bạn nhận được một liên kết cá nhân, như thế này:</p>
+<p><code>https://thewebsite.com/r/YOURCODE</code></p>
+<p>Mỗi lần có người nhấp vào, bạn kiếm được tiền. Mỗi lần có người đăng ký hoặc mua qua nó, bạn kiếm được nhiều hơn. Chia sẻ nó ở bất cứ đâu — nhóm trò chuyện, Facebook, Instagram, WhatsApp, kể cả tờ rơi in.</p>
+<h2>Hai cách kiếm tiền</h2>
+<table><thead><tr><th>Điều gì xảy ra</th><th>Bạn kiếm được</th></tr></thead><tbody>
+<tr><td>Có người mua hoặc đăng ký qua liên kết của bạn</td><td><b>+₱70</b> — tiền thật</td></tr>
+<tr><td>3 người khác nhau nhấp vào liên kết của bạn</td><td><b>+₱1</b> — bụi, nhưng tích cóp dần</td></tr>
+</tbody></table>
+<p>Một lần mua trả bằng tới <b>210 lượt nhấp</b>. Vậy nên hãy đuổi theo kết quả — người thật sự dùng trang web. Lượt nhấp chỉ là phần thưởng thêm trong khi bạn chờ.</p>
+<p class="muted">Số tiền ở đây hiển thị bằng peso; bảng điều khiển của bạn hiển thị bằng tiền tệ của bạn.</p>
+<h2>Thanh tiến trình của bạn</h2>
+<p>Khi đăng nhập, bạn sẽ thấy một thanh đầy dần khi bạn kiếm được. Mỗi lượt nhấp và mỗi lần mua tự làm nó di chuyển — bạn không bao giờ cần làm mới hay kiểm tra. Khi đạt <b>₱100</b>, số tiền đó được giữ vào và sẵn sàng để trả.</p>
+<p>Và nó chỉ đi lên: một khi bạn đã kiếm được, nó là của bạn. Thanh không bao giờ giảm.</p>
+<h2>Cách nó vận hành</h2>
+<ol>
+<li>Bạn chia sẻ liên kết của mình trong một nhóm hoặc bài đăng.</li>
+<li>Có người nhấp vào → hệ thống đếm nó và ghi nhớ rằng bạn đã gửi họ đến.</li>
+<li>Nếu họ mua hoặc đăng ký sau đó — kể cả nhiều ngày sau → bạn nhận <b>+₱70</b>.</li>
+<li>Thanh của bạn đầy lên.</li>
+<li>Khi bạn sẵn sàng được trả, admin sẽ tất toán.</li>
+</ol>
+<p>Mọi thứ diễn ra tự động. Không chụp màn hình, không báo cáo, không phải theo dõi.</p>
+<h2>Thử khu vực thử nghiệm</h2>
+<p>Chạm vào mục <b>“Earning simulation”</b> trên bảng điều khiển của bạn. Đó là một sân chơi cho bạn thấy chính xác cách kiếm tiền hoạt động — mà không động đến số dư thật của bạn. Chạm <b>Purchase</b> → thấy +₱70. Chạm <b>Click</b> → thấy +₱1. Bạn sẽ hiểu trong mười giây.</p>
+<h2>Thực hành tốt nhất (để kiếm nhanh)</h2>
+<ul>
+<li><b>Chia sẻ đúng nơi.</b> Mỹ, Canada, Châu Âu, Anh và Úc mua nhiều nhất. Rải liên kết của bạn ở nhiều quốc gia khác nhau, không chỉ một khu vực.</li>
+<li><b>Đừng dồn lượt nhấp vào một thành phố.</b> Hệ thống theo dõi lượt nhấp đến từ đâu. Quá nhiều từ một thành phố sẽ khiến bạn bị cảnh báo trước, rồi bị cấm nếu tiếp tục. Giới hạn rất rộng rãi — nhưng có thật. Rải ra nhiều thành phố và quốc gia giúp bạn an toàn và thu nhập lành mạnh.</li>
+<li><b>Mang người thật, khác nhau.</b> Đừng spam cùng một liên kết vào cùng một cuộc trò chuyện hết lần này đến lần khác — hệ thống biết khi vẫn là những người đó nhấp.</li>
+<li><b>Thêm bối cảnh.</b> Liên kết trơ trọi sẽ bị bỏ qua. “Này, trang này giúp bạn tìm vé máy bay rẻ hơn” thì được nhấp. Hãy cho mọi người biết họ nhận được gì.</li>
+<li><b>Chia sẻ vài ngày một lần, không chỉ một lần.</b> Đà tiến rất quan trọng.</li>
+</ul>
+<h2>Cách được trả tiền</h2>
+<p>Khi giá trị số dư của bạn tăng lên, admin thấy nó và trả cho bạn vào thông tin ngân hàng trên hồ sơ của bạn — vậy nên hãy chắc chắn chúng chính xác. Nếu có gì cần sửa, chúng tôi sẽ báo và bạn có thể cập nhật.</p>
+<h2>Một quy tắc</h2>
+<p>Đừng nhấp vào liên kết của chính bạn từ các thiết bị khác nhau, và đừng dùng bot hay lưu lượng giả. Hệ thống phân biệt người thật với người giả. Giữ sạch, giữ thật, và bạn sẽ tiếp tục kiếm được.</p>
+<h2>Bạn đã sẵn sàng</h2>
+<p>Hãy ngồi ở nơi thoải mái, mở bảng điều khiển, nhìn vào liên kết của bạn. Chia sẻ nó một lần và xem thanh di chuyển.</p>
+<p>Đó là toàn bộ công việc. <b>Chào mừng bạn.</b></p>`}
+};
+function openGuide(){ const ov=$("#guideOv"); if(!ov) return; const g=GUIDE[curLang]||GUIDE.en; $("#guideBody").innerHTML=g.html; ov.scrollTop=0; ov.classList.add("open"); document.body.style.overflow="hidden"; }
+function closeGuide(){ const ov=$("#guideOv"); if(!ov) return; ov.classList.remove("open"); document.body.style.overflow=""; }
+function wireGuide(){ const ov=$("#guideOv"); if(!ov) return; const x=$("#guideClose"); if(x) x.onclick=closeGuide; ov.onclick=(e)=>{ if(e.target===ov) closeGuide(); }; document.addEventListener("keydown",(e)=>{ if(e.key==="Escape" && ov.classList.contains("open")) closeGuide(); }); }
+
 function render(){
   const app = $("#app");
   app.classList.toggle("pc", !!(DB.session && DB.session.role==="admin" && isWide()));
@@ -1340,6 +1578,7 @@ function viewWorker(){
       <div class="stat"><div class="n">#${r}</div><div class="k">${t("stat_rank")}</div></div>
     </div>
   </div>
+  <div class="guide-cta"><button type="button" class="guide-link" id="guideOpen">${(GUIDE[curLang]||GUIDE.en).label} ›</button></div>
   ${personalNoteHtml(w)}
   ${noticeWorkerHtml()}
   ${workerLinks(w)}
@@ -1401,6 +1640,7 @@ function viewWorker(){
 }
 function wireWorker(){
   $("#signout").onclick=signOut;
+  { const _g=$("#guideOpen"); if(_g) _g.onclick=openGuide; }
   wireCcy();
   document.querySelectorAll("[data-share]").forEach(b=> b.onclick=()=>{
     const url=b.dataset.share, text=b.dataset.msg||t("share_fallback_title");
@@ -1482,6 +1722,7 @@ window.addEventListener("resize", ()=>{
   }
   render();
   pwaInit();
+  wireGuide();
 })();
 
 /* PWA: register the service worker + show an install banner (re-shown each launch until installed) */
