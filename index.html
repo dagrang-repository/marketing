@@ -358,6 +358,7 @@ const KEY = "marketing_foundation_v1";
 const BAR_FULL         = 100; // points that fill one bar; a full bar banks this much to the payable balance
 const RESULT_VALUE     = 70;  // one verified result (sign-up / purchase / paid action) = 70 points = ₱70
 const CLICKS_PER_POINT = 3;   // 3 unique-IP clicks = 1 point (₱1) — "dust"; same-IP repeats count once
+const SIM_SEED         = 500; // simulation (and its collapsed peek) starts here so it shows a positive number, never a bare 0
 
 /* ---------- i18n (worker-facing; admin stays English) ---------- */
 const LANG_NAMES = {en:"English","es-419":"Español",fil:"Filipino",id:"Bahasa Indonesia",vi:"Tiếng Việt",km:"ខ្មែរ",lo:"ລາວ",ka:"ქართული",mn:"Монгол"};
@@ -1610,7 +1611,7 @@ function viewWorker(){
   </div>
   ${workerPayCard(w)}
   <details class="card sim">
-    <summary class="simsum"><span class="simsum-row">${t("sim_summary")} <span class="opt">${t("sim_tap_open")}</span></span><span class="sim-peek" aria-hidden="true"><span class="amt">${fmtNum(0,wc)}</span></span></summary>
+    <summary class="simsum"><span class="simsum-row">${t("sim_summary")} <span class="opt">${t("sim_tap_open")}</span></span><span class="sim-peek" aria-hidden="true"><span class="amt" id="simPeek">${fmtNum(SIM_SEED,wc)}</span></span></summary>
     <div class="sub">${t("sim_sub")}</div>
     <div class="selfbal">
       <div><span class="cur">${sym}</span><span class="amt" id="simBal">${fmtNum(0,wc)}</span></div>
@@ -1662,9 +1663,9 @@ function wireWorker(){
   if($("#simBuy")){
     const sw = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
     const wc = wcur(sw);
-    let total=0, carry=0, busy=false;
+    let total=SIM_SEED, carry=0, busy=false;
     const paint=()=>{ const bal=Math.floor(total/BAR_FULL)*BAR_FULL, rem=total%BAR_FULL;
-      $("#simBal").textContent=fmtNum(bal,wc); $("#simFill").style.width=rem+"%";
+      $("#simBal").textContent=fmtNum(bal,wc); { const _pk=$("#simPeek"); if(_pk) _pk.textContent=fmtNum(bal,wc); } $("#simFill").style.width=rem+"%";
       $("#simNeedle").style.left=rem+"%"; $("#simTop").textContent=money(rem,wc)+" / "+money(BAR_FULL,wc); };
     const status=(m,c)=>{ const s=$("#simStatus"); s.textContent=m; s.className="sim-status"+(c?" "+c:""); };
     $("#simBuy").onclick=()=>{ if(busy) return; total+=RESULT_VALUE; paint(); status(t("sim_st_buy",{amt:money(RESULT_VALUE,wc)}),"ok"); };
@@ -1676,7 +1677,7 @@ function wireWorker(){
       setTimeout(()=>{ clearInterval(iv); busy=false;
         if(Math.random()<0.6){ total+=RESULT_VALUE; paint(); status(t("sim_st_active",{amt:money(RESULT_VALUE,wc)}),"ok"); }
         else { status(t("sim_st_fake",{amt:money(0,wc)}),"bad"); } },1600); };
-    $("#simReset").onclick=()=>{ if(busy) return; total=0; carry=0; paint(); status(t("sim_tap_earn")); };
+    $("#simReset").onclick=()=>{ if(busy) return; total=SIM_SEED; carry=0; paint(); status(t("sim_tap_earn")); };
     paint();
   }
 
