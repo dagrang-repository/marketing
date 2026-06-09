@@ -16,19 +16,18 @@
    NOT reverse the balance (ABSORB — no clawback). Bad behaviour
    is handled by a ban, never by reducing earned balance.
 
-   FRAUD DETECTION = GEO-SPREAD (built later with the in-house
-   click method — STUB here for now):
-     The signal is SPREAD vs REPETITION. Clicks scattered across
-     many locations are legitimate at ANY volume — the link is
-     spreading. Clicks piling up inside one ~200 m radius mean the
-     link is NOT spreading — that is fake/farmed. (Same-IP counting
+   FRAUD DETECTION = CITY-CLUSTER (LIVE):
+     The signal is SPREAD vs CONCENTRATION. A promoter whose clicks
+     are spread across many cities keeps each city's tally low and is
+     never flagged. Clicks piling up in ONE city (country|region|city)
+     mean the link is NOT spreading — likely farmed. (Per-IP counting
      is inadequate: a family compound has many phones/IPs in one
-     place.) Threshold: WARN at 150 clustered clicks within 200 m
-     (red notice on the worker's board), AUTO-BAN at 300. This needs
-     per-click geo-coordinates that only the in-house click method
-     will supply, so the live engine is a STUB until that exists.
-     The static red warning already in the worker UI is the live
-     deterrent meanwhile. Earned balance is never reduced (ban only).
+     place.) Tally is per coarse geo: WARN at CLUSTER_WARN (default
+     2000) sets a red notice on the worker's board; AUTO-BAN at
+     CLUSTER_BAN (default 4000). Both tunable via [vars]. Clicks are
+     dust (₱1 per 3) so thresholds are lenient. Geo is supplied by
+     owned sites (request body) and by the /go redirector (request.cf);
+     no geo -> still counts, just unflagged. Balance never reduced (ban only).
 
    Attribution: the GATE CODE is the single key — the click
    sub-id, the Stripe metadata, and the owned-site gate.
@@ -47,6 +46,9 @@
      STRIPE_CREDIT          "1" to credit purchases via Stripe (default off)
      HOLD_DAYS              days before a signup is rechecked (default 3)
      ACTIVE_WINDOW_DAYS     "still active" = activity within N days at recheck (default 2)
+     TRACK_SECRET           x-track-secret for /track/event (optional; falls back to VELIANE_SECRET)
+   Tunables (defaults in code): RL_EMAIL_PER_HOUR 7, RL_IP_PER_HOUR 15,
+   CLUSTER_WARN 2000, CLUSTER_BAN 4000.
    ============================================================ */
 
 const BAR_FULL = 100;       // points that bank ₱100 to the payable balance
@@ -65,6 +67,15 @@ function cors() {
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type,authorization,stripe-signature,x-veliane-secret,x-track-secret",
   };
+}
+
+/* Accept the original shared secret OR a second secret (VELIANE_SECRET_2), so an
+   additional owned site (APlusZ) can carry its own secret WITHOUT rotating the
+   shared VELIANE_SECRET, which would break the other live sites. Reads x-veliane-secret. */
+function okVeliane(req, env) {
+  const got = req.headers.get("x-veliane-secret") || "";
+  return (!!env.VELIANE_SECRET   && got === env.VELIANE_SECRET) ||
+         (!!env.VELIANE_SECRET_2 && got === env.VELIANE_SECRET_2);
 }
 
 const CODE_TTL_SEC = 10 * 60;
@@ -608,7 +619,7 @@ export default {
          worker.js-owned flow below (/veliane/signup + /veliane/activity), never
          both for the same member. Body: { gate, delta, members? } */
       if (p === "/veliane/intake" && req.method === "POST") {
-        if ((req.headers.get("x-veliane-secret") || "") !== (env.VELIANE_SECRET || "___"))
+        if (!okVeliane(req, env))
           return json({ error: "unauthorized" }, 401);
         const { gate, delta, members } = await req.json();
         const w = await workerByGate(env, gate);
@@ -629,7 +640,7 @@ export default {
          credits +₱70 only if still active (else skips). Idempotent by memberId.
          Body: { gate, memberId } */
       if (p === "/veliane/signup" && req.method === "POST") {
-        if ((req.headers.get("x-veliane-secret") || "") !== (env.VELIANE_SECRET || "___"))
+        if (!okVeliane(req, env))
           return json({ error: "unauthorized" }, 401);
         const { gate, memberId } = await req.json();
         if (!gate || !memberId) return json({ error: "gate+memberId required" }, 400);
@@ -648,7 +659,7 @@ export default {
          lastActive so the cron can tell active from dormant. Ignored once
          resolved. Body: { memberId } or { members: [ids] } */
       if (p === "/veliane/activity" && req.method === "POST") {
-        if ((req.headers.get("x-veliane-secret") || "") !== (env.VELIANE_SECRET || "___"))
+        if (!okVeliane(req, env))
           return json({ error: "unauthorized" }, 401);
         const body = await req.json();
         const ids = Array.isArray(body.members) ? body.members : (body.memberId ? [body.memberId] : []);
@@ -660,15 +671,13 @@ export default {
         return json({ ok: true, updated: n });
       }
 
-      /* ---- Tracker postback (generic intake; the in-house click method posts here) ----
-         Endpoint name is a legacy label and will be renamed when the in-house
-         click method is built. Map the tracker's fields to:
+      /* ---- /track/event : generic intake for your in-house click method (clicks + conversions) ----
+         Auth: x-track-secret (falls back to VELIANE_SECRET). Map the tracker's fields to:
            gate   = the sub-id set per worker link
            event  = "click" | "conversion"
            unique = "1" for a real unique click (the tracker filters bots)
            id     = a unique click/event id for idempotency
-           coords = reserved for the future GEO-SPREAD fraud check (200 m rule) */
-      /* ---- generic intake for your own in-house tracker (clicks + conversions) ---- */
+           geo    = { country, region, city } for the city-cluster fraud check */
       if (p === "/track/event" && req.method === "POST") {
         if ((req.headers.get("x-track-secret") || "") !== (env.TRACK_SECRET || env.VELIANE_SECRET || "___"))
           return json({ error: "unauthorized" }, 401);
@@ -688,13 +697,13 @@ export default {
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
 
-      /* ---- Owned-site click (self-counted) ----
-         For sites YOU own. The site's /r/<code> route fires this once per
-         visitor-per-day (it builds `id`) after its own bot check — SAME secret
-         as the rest of the owned site (x-veliane-secret). Dust (3 unique = 1 pt).
-         Fraud detection is GEO-SPREAD, built later (STUB). Body: { gate, id, coords?, src } */
+      /* ---- /owned/click : self-counted clicks for sites YOU own ----
+         The site's /r/<code> route fires this once per visitor-per-day (it builds
+         `id`) after its own bot check — SAME secret as the rest of the owned site
+         (x-veliane-secret). Dust (3 unique = 1 pt). City-cluster fraud check uses
+         the visitor geo if the site forwards it. Body: { gate, id, geo?, src? } */
       if (p === "/owned/click" && req.method === "POST") {
-        if ((req.headers.get("x-veliane-secret") || "") !== (env.VELIANE_SECRET || "___"))
+        if (!okVeliane(req, env))
           return json({ error: "unauthorized" }, 401);
         const body = await req.json();
         const gate = body.gate, id = body.id;
