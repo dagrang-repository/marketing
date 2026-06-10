@@ -1420,7 +1420,7 @@ function wireAdmin(){
   document.querySelectorAll("[data-rmw]").forEach(btn=> btn.onclick = async ()=>{
     const w=workerById(btn.dataset.rmw); if(!w) return;
     if(!confirm(`Remove ${w.name} from the dashboard?\n\nTheir record and current balance are deleted. Any past payments stay in the payment log.`)) return;
-    try{ await api("/worker/remove","POST",{ workerId:w.id }); await refresh(); }catch(e){ alert("Couldn't remove the worker: "+e.message); }
+    try{ await api("/worker/remove","POST",{ workerId:w.id }); await refresh(); }catch(e){ alert("Couldn't remove the worker: "+payErr(e)); }
   });
 
   // Inject (the Worker computes dust carry + banking)
@@ -1462,12 +1462,20 @@ function wireAdmin(){
   document.querySelectorAll("[data-photo]").forEach(inp=> inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return; const id=inp.dataset.photo; resizePhoto(f, async (durl)=>{ try{ await api("/worker/photo","POST",{ workerId:id, photo:durl }); await refresh(); }catch(e){ alert("Couldn't set photo: "+e.message); } }); });
   document.querySelectorAll("[data-photoclear]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/photo","POST",{ workerId:b.dataset.photoclear, photo:"" }); await refresh(); }catch(e){ alert("Couldn't remove photo: "+e.message); } });
 }
+const PAY_ERR = {
+  already_processing: "A payout for this worker is already in processing — Confirm sent or Cancel it first.",
+  not_processing: "No payout is in processing for this worker (the page may be stale — it will refresh).",
+  nothing_to_pay: "Nothing to pay — no banked balance.",
+  payout_processing: "This worker has a payout in processing — Confirm sent or Cancel it before removing them.",
+  no_worker: "Worker not found (the page may be stale — it will refresh)."
+};
+function payErr(e){ return PAY_ERR[e.message] || e.message; }
 function payWorker(id, btn){
   const w=workerById(id); if(!w || w.balance<=0) return;
   if(btn){ btn.disabled=true; btn.textContent="…"; }
   api("/pay","POST",{ workerId:id }).then(()=>{
     setTimeout(refresh, 250); // row now shows "processing" + Confirm sent / Cancel
-  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Pay"; } alert("Couldn't start the payout: "+e.message); });
+  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Pay"; } alert("Couldn't start the payout: "+payErr(e)); refresh(); });
 }
 function confirmPay(id, btn){
   const w=workerById(id); if(!w) return;
@@ -1477,13 +1485,13 @@ function confirmPay(id, btn){
   api("/pay/confirm","POST",{ workerId:id }).then(()=>{
     const balEl=$("#bal-"+id); if(balEl) balEl.outerHTML='<div class="paidflash">PAID '+money(amount, wcur(w))+'</div>';
     setTimeout(refresh, 1100);
-  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Confirm sent"; } alert("Couldn't confirm the payment: "+e.message); });
+  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Confirm sent"; } alert("Couldn't confirm the payment: "+payErr(e)); refresh(); });
 }
 function cancelPay(id, btn){
   const w=workerById(id); if(!w) return;
   if(btn){ btn.disabled=true; btn.textContent="…"; }
   api("/pay/cancel","POST",{ workerId:id }).then(()=> setTimeout(refresh, 250))
-  .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Cancel"; } alert("Couldn't cancel: "+e.message); });
+  .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Cancel"; } alert("Couldn't cancel: "+payErr(e)); refresh(); });
 }
 
 function workerLinks(w){
