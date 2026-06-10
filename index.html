@@ -1303,7 +1303,9 @@ function adminWorkers(){
         <div><div class="bal" id="bal-${w.id}">${money(w.balance,wc)}<span class="ccode">${wc}</span></div>
           <div class="conf">${w.confirmed} confirmed · ${money(w.paidTotal||0, wc)} paid total${w.note?' · ★ note':''}${w.banned?' · BANNED':(w.warned?' · warned':'')}${w.payoutReq?' · payout requested':''}</div></div>
         <div class="wbtns">
-          <button class="btn pay sm" data-pay="${w.id}" ${w.balance<=0?'disabled':''}>Pay</button>
+          ${w.payState==='processing'
+            ? `<span class="wtag req">processing ${money(w.payPending||0, wc)}</span><button class="btn pay sm" data-payconfirm="${w.id}">Confirm sent</button><button class="btn sm" data-paycancel="${w.id}">Cancel</button>`
+            : `<button class="btn pay sm" data-pay="${w.id}" ${w.balance<=0?'disabled':''}>Pay</button>`}
           <button class="btn sm" data-warn="${w.id}">${w.warned?'Unwarn':'Warn'}</button>
           <button class="btn sm" data-ban="${w.id}">${w.banned?'Unban':'Ban'}</button>
           <button class="btn rmw sm" data-rmw="${w.id}" title="Remove worker">Remove</button>
@@ -1409,8 +1411,10 @@ function wireAdmin(){
     }
   };
 
-  // Pay buttons
+  // Pay buttons (two-step: Pay -> processing, Confirm sent -> paid+email, Cancel -> revert)
   document.querySelectorAll("[data-pay]").forEach(btn=> btn.onclick=()=> payWorker(btn.dataset.pay, btn));
+  document.querySelectorAll("[data-payconfirm]").forEach(btn=> btn.onclick=()=> confirmPay(btn.dataset.payconfirm, btn));
+  document.querySelectorAll("[data-paycancel]").forEach(btn=> btn.onclick=()=> cancelPay(btn.dataset.paycancel, btn));
 
   // Remove worker (payment history is kept)
   document.querySelectorAll("[data-rmw]").forEach(btn=> btn.onclick = async ()=>{
@@ -1460,13 +1464,26 @@ function wireAdmin(){
 }
 function payWorker(id, btn){
   const w=workerById(id); if(!w || w.balance<=0) return;
-  const amount=w.balance;
-  if(btn){ btn.disabled=true; btn.textContent="Sending…"; }
+  if(btn){ btn.disabled=true; btn.textContent="…"; }
   api("/pay","POST",{ workerId:id }).then(()=>{
+    setTimeout(refresh, 250); // row now shows "processing" + Confirm sent / Cancel
+  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Pay"; } alert("Couldn't start the payout: "+e.message); });
+}
+function confirmPay(id, btn){
+  const w=workerById(id); if(!w) return;
+  const amount=w.payPending||0;
+  if(!confirm("Confirm you've ALREADY sent "+money(amount, wcur(w))+" to "+w.name+" via Wise.\n\nThis marks it Paid and emails the worker that the payment is on its way.")) return;
+  if(btn){ btn.disabled=true; btn.textContent="…"; }
+  api("/pay/confirm","POST",{ workerId:id }).then(()=>{
     const balEl=$("#bal-"+id); if(balEl) balEl.outerHTML='<div class="paidflash">PAID '+money(amount, wcur(w))+'</div>';
-    if(btn){ btn.textContent="Sent"; }
     setTimeout(refresh, 1100);
-  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Pay"; } alert("Couldn't record the payment: "+e.message); });
+  }).catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Confirm sent"; } alert("Couldn't confirm the payment: "+e.message); });
+}
+function cancelPay(id, btn){
+  const w=workerById(id); if(!w) return;
+  if(btn){ btn.disabled=true; btn.textContent="…"; }
+  api("/pay/cancel","POST",{ workerId:id }).then(()=> setTimeout(refresh, 250))
+  .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Cancel"; } alert("Couldn't cancel: "+e.message); });
 }
 
 function workerLinks(w){
