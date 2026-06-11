@@ -850,6 +850,15 @@ function viewLogin(){
   <div class="foot">Marketing · payment & attribution foundation</div>`;
 }
 function wireLogin(){
+  // arriving from the "account created" email: ?email=… -> prefill + jump to code entry
+  const pre = new URLSearchParams(location.search).get("email");
+  if (pre && !pendingEmail && $("#step1")) {
+    pendingEmail = pre;
+    const le=$("#loginEmail"); if(le) le.value=pre;
+    const st=$("#sentTo"); if(st) st.textContent=pre;
+    $("#step1").classList.add("hide"); $("#step2").classList.remove("hide");
+    const lc=$("#loginCode"); if(lc) lc.focus();
+  }
   const sc=$("#sendCode");
   if(sc) sc.onclick = async ()=>{
     const email=$("#loginEmail").value.trim();
@@ -1366,6 +1375,9 @@ function adminApplications(){
           ${a.msg?`<div class="apmsg">${escapeHtml(a.msg)}</div>`:''}
           <div class="apdate mut">${fmtDate(a.ts)}</div>
         </div>
+        ${a.sent
+          ? `<span class="wtag req" style="align-self:center;margin-right:6px;white-space:nowrap">&#10003; sent</span>`
+          : `<button class="btn sm" data-apcreate="${a.id}" style="align-self:center;margin-right:6px;white-space:nowrap">Add worker</button>`}
         <button class="apx" data-apdel="${a.id}" title="Delete">×</button>
       </div>`).join("")
     : `<div class="mut" style="padding:6px 0">No applications yet. Visitors who open the site as a job listing can apply here.</div>`;
@@ -1539,6 +1551,7 @@ function wireAdmin(){
   document.querySelectorAll("[data-phone]").forEach(b=> b.onclick = async ()=>{ const id=b.dataset.phone; const v=($("#ph-"+id)||{}).value||""; b.disabled=true; const lbl=b.textContent; b.textContent="…"; try{ await api("/worker/phone","POST",{ workerId:id, phone:v.trim() }); await refresh(); }catch(e){ b.disabled=false; b.textContent=lbl; alert("Couldn't save phone: "+e.message); } });
   document.querySelectorAll("[data-photo]").forEach(inp=> inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return; const id=inp.dataset.photo; resizePhoto(f, async (durl)=>{ try{ await api("/worker/photo","POST",{ workerId:id, photo:durl }); await refresh(); }catch(e){ alert("Couldn't set photo: "+e.message); } }); });
   document.querySelectorAll("[data-photoclear]").forEach(b=> b.onclick = async ()=>{ try{ await api("/worker/photo","POST",{ workerId:b.dataset.photoclear, photo:"" }); await refresh(); }catch(e){ alert("Couldn't remove photo: "+e.message); } });
+  document.querySelectorAll("[data-apcreate]").forEach(b=> b.onclick = async ()=>{ b.disabled=true; b.textContent="Sending…"; try{ await api("/apply/create","POST",{ id:b.dataset.apcreate }); await refresh(); }catch(e){ b.disabled=false; b.textContent="Add worker"; alert("Couldn't create: "+e.message); } });
   document.querySelectorAll("[data-apdel]").forEach(b=> b.onclick = async ()=>{ b.disabled=true; try{ await api("/apply/delete","POST",{ id:b.dataset.apdel }); await refresh(); }catch(e){ b.disabled=false; alert("Couldn't delete: "+e.message); } });
   const apc=$("#apClear"); if(apc) apc.onclick = async ()=>{ if(!confirm("Clear ALL job applications? This can't be undone.")) return; apc.disabled=true; try{ await api("/apply/clear","POST",{}); await refresh(); }catch(e){ apc.disabled=false; alert("Couldn't clear: "+e.message); } };
 }
