@@ -482,14 +482,14 @@ async function api(path, method="GET", body){
 }
 
 /* in-memory cache, hydrated from the Worker; never persisted to localStorage */
-let DB = { config:{ currency:"PHP" }, workers:[], payments:[], applications:[], sites:[], links:[], notice:"", session:null, meRank:0, meTotal:0, fx:{ base:"PHP", rates:{ PHP:1 } } };
+let DB = { config:{ currency:"PHP" }, workers:[], payments:[], applications:[], sites:[], links:[], messages:[], session:null, meRank:0, meTotal:0, fx:{ base:"PHP", rates:{ PHP:1 } } };
 function save(){ /* no-op: the Worker is the source of truth */ }
 
 async function hydrate(){
   if(ROLE === "admin"){
     const st = await api("/admin/state");
     DB.workers = st.workers || [];
-    DB.notice  = st.notice  || "";
+    DB.messages = st.messages || [];
     DB.config.currency = st.defaultCurrency || "PHP";
     DB.sites    = st.sites    || [];
     DB.links    = st.links    || [];
@@ -507,7 +507,7 @@ async function hydrate(){
     DB.workers  = [self];
     DB.links    = me.links || [];
     DB.payments = me.payments || [];
-    DB.notice   = me.notice || "";
+    DB.messages = me.messages || [];
     DB.meRank   = me.rank || 1; DB.meTotal = me.total || 1;
     DB.fx       = me.fx || DB.fx;
     DB.session  = { role:"worker", workerId:self.id, email:self.email };
@@ -923,23 +923,53 @@ function wireLogin(){
   };
 }
 
+function fmtMsgTime(ts){
+  try{ return new Date(ts).toLocaleString([], {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+  catch(e){ return new Date(ts).toISOString().slice(0,16).replace('T',' '); }
+}
 function adminNotice(){
-  const v = DB.notice || "";
+  const opts = DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)}</option>`).join("");
+  const msgs = (DB.messages||[]);
+  const nameOf = (id)=>{ if(id==null) return "All workers"; const w=workerById(id); return w?escapeHtml(w.name):"(removed worker)"; };
+  const log = msgs.length
+    ? msgs.map(m=>`<div class="aprow"><div class="apmain">
+        <div class="apname"><b>${nameOf(m.workerId)}</b> · <span class="mut">${fmtMsgTime(m.ts)}</span></div>
+        <div class="apmsg">${escapeHtml(m.text)}</div>
+      </div><button class="apx" data-msgdel="${m.id}" title="Delete">×</button></div>`).join("")
+    : `<div class="empty">No messages sent yet.</div>`;
   return `<div class="card">
-    <h2>Message to all workers</h2>
-    <div class="sub">${ v ? 'This is showing on every worker\u2019s page now. Edit and save to change it, or clear it to remove it.' : 'Type a note and save \u2014 it appears on every worker\u2019s page, just above their pay line.' }</div>
-    <div class="field"><textarea class="msg" id="noticeText" placeholder="Tomorrow, 31 December, New Year\u2019s Eve \u2014 you earn double.">${escapeHtml(v)}</textarea></div>
-    <div class="row">
-      <button class="btn" id="saveNotice">${ v ? 'Save changes' : 'Save & show' }</button>
-      <button class="btn ghost" id="clearNotice" ${v?'':'disabled'}>Clear message</button>
+    <h2>Send a message</h2>
+    <div class="sub">Pick a worker or send to everyone. Each message is timestamped on their page and stays until you delete it here.</div>
+    <div class="field"><label class="fl">To</label>
+      <select id="msgTo"><option value="all">All workers</option>${opts}</select></div>
+    <div class="field"><textarea class="msg" id="msgText" placeholder="Tomorrow you will be paid double."></textarea></div>
+    <div class="row"><button class="btn" id="sendMsg">Send</button></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2 style="margin:0">Sent messages</h2>
+      ${msgs.length?`<button class="btn ghost sm" id="clearMsgs">Clear all</button>`:""}
     </div>
+    <div style="margin-top:10px">${log}</div>
   </div>`;
 }
 function wireNotice(){
-  const sv=$("#saveNotice");
-  if(sv) sv.onclick = async ()=>{ try{ await api("/notice","POST",{ text:($("#noticeText").value||"").trim() }); await refresh(); }catch(e){ alert("Couldn't save the message: "+e.message); } };
-  const cl=$("#clearNotice");
-  if(cl) cl.onclick = async ()=>{ try{ await api("/notice","POST",{ text:"" }); await refresh(); }catch(e){ alert("Couldn't clear the message: "+e.message); } };
+  const sm=$("#sendMsg");
+  if(sm) sm.onclick = async ()=>{
+    const text=($("#msgText").value||"").trim();
+    const workerId=$("#msgTo").value;
+    if(!text){ $("#msgText").focus(); return; }
+    sm.disabled=true; sm.textContent="Sending…";
+    try{ await api("/message","POST",{ text, workerId }); await refresh(); }
+    catch(e){ sm.disabled=false; sm.textContent="Send"; alert("Couldn't send: "+e.message); }
+  };
+  document.querySelectorAll("[data-msgdel]").forEach(b=> b.onclick = async ()=>{
+    b.disabled=true;
+    try{ await api("/message/delete","POST",{ id:b.dataset.msgdel }); await refresh(); }
+    catch(e){ b.disabled=false; alert("Couldn't delete: "+e.message); }
+  });
+  const cl=$("#clearMsgs");
+  if(cl) cl.onclick = async ()=>{ if(!confirm("Delete all messages?")) return; try{ await api("/message/clear","POST",{}); await refresh(); }catch(e){ alert("Couldn't clear: "+e.message); } };
   const sel=$("#pwSel");
   if(sel) sel.onchange=()=>{ const w=workerById(sel.value); const ta=$("#pwText"); if(ta) ta.value = w?(w.note||""):""; };
   const sp=$("#savePw");
@@ -948,10 +978,10 @@ function wireNotice(){
   if(cp) cp.onclick = async ()=>{ const id=$("#pwSel").value; if(!id) return; try{ await api("/worker/note","POST",{ workerId:id, note:"" }); await refresh(); }catch(e){ alert("Couldn't clear the note: "+e.message); } };
 }
 function noticeWorkerHtml(){
-  const v = DB.notice || "";
-  if(!v) return "";
-  return `<div class="notice"><span class="nicon">\u2731</span>
-    <div class="ni"><div class="nk">${t("notice_k")}</div><div class="nt">${escapeHtml(v)}</div></div></div>`;
+  const msgs = (DB.messages||[]);
+  if(!msgs.length) return "";
+  return msgs.map(m=>`<div class="notice"><span class="nicon">\u2731</span>
+    <div class="ni"><div class="nk">${t("notice_k")} · ${fmtMsgTime(m.ts)}</div><div class="nt">${escapeHtml(m.text)}</div></div></div>`).join("");
 }
 function adminPersonalNote(){
   const opts = DB.workers.map(w=>`<option value="${w.id}">${escapeHtml(w.name)}${w.note?" \u2605":""}</option>`).join("");
