@@ -1,0 +1,83 @@
+MEMORY DUMP — Marketing / Payment Foundation
+Evicted 2026-08-27 to free slots at the 30-memory cap.
+Keep this file at:  C:\Users\Personal PC\Desktop\Marketing\memory-dump.txt
+
+Eviction policy: only FACTS and finished SESSION LOGS are evicted, oldest and
+stalest first. RULES are never evicted — they stay in memory permanently.
+
+Everything below is HISTORICAL. It was true when written and describes work
+that is already shipped and live. It was removed only because newer entries
+supersede it or because it no longer needs to be recalled every session.
+
+--------------------------------------------------------------------------
+[1] BACKEND AUDIT + FIRST CRON FIX  (worker version f13bba59 — long superseded)
+--------------------------------------------------------------------------
+Marketing backend AUDIT DONE + DEPLOYED (Ver f13bba59): worker.js (764 lines)
+LIVE. Daily cron now LIVE (deploy showed "schedule: 0 3 * * *") — fixed the
+only real defect: scheduled() day-3 credit + reconcile never fired
+(wrangler.toml had no [triggers]). worker.js change was comments-only. The
+veliane-r-route.ts Claude made was wrong for the stack, discarded; the user's
+own Veliane route.ts (Supabase referral + /owned/click ping) is correct and
+restored. "Project fully shipped, nothing pending" — that closing line was
+true at the time and is NOT true now.
+
+STILL-LIVE FACTS FROM THIS ENTRY: the daily cron 0 3 * * * exists and is
+registered via [triggers] in wrangler.toml. Veliane's own route.ts is the
+correct one — never replace it.
+
+--------------------------------------------------------------------------
+[2] PWA SHELL
+--------------------------------------------------------------------------
+Marketing PWA = DONE + LIVE: manifest.webmanifest + sw.js (service worker,
+network-first shell cache; cross-origin Worker API passes through) + icons
+(192/512 + apple-touch-180, green serif M) at repo root; index.html links
+manifest / theme-color #0f6e56 / apple-touch + install banner: Android
+beforeinstallprompt -> Install button, iOS -> Share -> Add to Home Screen hint,
+re-shown each launch until installed. Also added Copy button beside Share/Open
+on the worker link card.
+
+WHY IT STILL MATTERS OCCASIONALLY: sw.js caches the app shell, so a stale
+index.html can be served after a deploy. If the user reports "the change isn't
+showing", a hard refresh or fully closing and reopening the installed app is
+the first thing to try.
+
+--------------------------------------------------------------------------
+[3] OWN CLICK METHOD / /go REDIRECTOR
+--------------------------------------------------------------------------
+Marketing item 1 (own click method) DONE + LIVE. worker.js:
+/clickmagick/event RENAMED -> /track/event (auth x-track-secret, falls back to
+VELIANE_SECRET); generic in-house-tracker intake (click = dust, conversion =
+₱70). NEW /go/CODE?u=DEST redirector for NON-OWNED sites — counts dust from
+visitor request.cf geo then 302 forwards (no code on the foreign site;
+non-owned = clicks only, no purchase attribution). index.html: non-owned links
+now route through Worker /go instead of the old ?s1= form.
+
+--------------------------------------------------------------------------
+[4] RATE LIMITING + ACCOUNT FIELDS (item M)
+--------------------------------------------------------------------------
+Marketing item M: (1) /auth/request rate-limited + LIVE — hourly buckets,
+default 7/email/hr + 15/IP/hr, tunable via wrangler.toml [vars]
+RL_EMAIL_PER_HOUR / RL_IP_PER_HOUR; over -> 429, login shows the reason; api()
+attaches err.info. Bump 15/IP for shared IPs if needed. (2) photo + phone +
+bank REINTRODUCED + LIVE (NO encryption: RIB is receive-only, full exposure
+wanted). REMAINING: CORS lock DEFERRED — the user sees little value in it, the
+session token is the real guard.
+
+--------------------------------------------------------------------------
+[5] SEO / INDEXING
+--------------------------------------------------------------------------
+Payment Foundation SEO DONE + LIVE (commit 262df19): pay.veliane.org is
+indexable. index.html head: title + meta description + robots index,follow +
+canonical + OG/Twitter tags. robots.txt (Allow all + sitemap) and sitemap.xml
+at repo root. Google Search Console VERIFIED via the HTML-file method
+(googleb782f441deea598c.html at root). Manual sitemap submission kept erroring
+and was skipped — robots.txt auto-discovers it. Bing Webmaster Tools NOT done.
+The admin board is never indexed. Optional next step noted: a honeypot field
+on /apply.
+
+NOTE: the page title and meta description have since been rewritten by the
+second webmaster to "Veliane — Part-time job, apply here".
+
+--------------------------------------------------------------------------
+END OF DUMP
+--------------------------------------------------------------------------
