@@ -120,15 +120,18 @@
   .note.warn{color:var(--warn); background:#faeeda; border-color:#f3dcb6}
   .note.warn b{color:var(--warn)}
   .note.good{background:#e7f5ee; border-color:#bfe3d0}
-  /* PWA install banner */
-  .pwa-banner{position:fixed; left:0; right:0; bottom:0; z-index:90; display:none; gap:12px; align-items:center;
-    max-width:480px; margin:0 auto; padding:12px 14px; background:var(--accent-ink); color:#fff;
-    box-shadow:0 -8px 30px -12px rgba(0,0,0,.4); font-size:13.5px; line-height:1.4}
-  .pwa-banner .pi{flex:1}
-  .pwa-banner .pi b{display:block; font-size:14px; margin-bottom:1px}
-  .pwa-banner button{font-family:inherit; cursor:pointer; border-radius:8px; border:none; padding:9px 13px; font-size:13px; font-weight:600}
-  .pwa-banner .pgo{background:#fff; color:var(--accent-ink)}
-  .pwa-banner .px{background:transparent; color:#cfe6dd; border:1px solid #3a6b5d; padding:9px 11px}
+  /* PWA install banner — a compact floating card, NOT a full-width bar.
+     Edge-to-edge made the whole strip read as one giant button. */
+  /* compact pill that hugs its label — NOT a full-width strip.
+     It never dismisses: it stays until the app is actually installed. */
+  .pwa-banner{position:fixed; left:50%; transform:translateX(-50%); bottom:12px; z-index:90; display:none;
+    width:auto; max-width:calc(100% - 24px); background:var(--accent-ink); color:#fff; border-radius:10px;
+    box-shadow:0 8px 24px -8px rgba(0,0,0,.45); overflow:hidden}
+  .pwa-banner button{display:block; width:auto; margin:0; padding:10px 14px; border:none; cursor:pointer;
+    background:transparent; color:#fff; font-family:inherit; font-size:14px; font-weight:600;
+    line-height:1.2; white-space:nowrap}
+  .pwa-banner .pios{margin:0; padding:0 14px 11px; font-size:13.5px; line-height:1.5; white-space:normal; max-width:260px}
+  body.pwa-on{padding-bottom:64px}
   .demo-banner{font-size:13px; color:var(--warn); background:#faeeda; border:1px solid #f3dcb6;
     border-radius:var(--r-sm); padding:9px 12px; margin:0 0 14px; display:flex; gap:8px; align-items:flex-start}
   .demo-banner button{margin-left:auto; background:none;border:none;color:var(--warn);cursor:pointer;font-size:15px;line-height:1;padding:0}
@@ -2109,13 +2112,16 @@ window.addEventListener("resize", ()=>{
   wireGuide();
 })();
 
-/* PWA: register the service worker + show an install banner (re-shown each launch until installed) */
+/* PWA: register the service worker + install banner.
+   The banner CANNOT be dismissed — it stays permanently until the app is
+   genuinely installed. standalone() is the only thing that hides it, and that
+   reads the live display mode, so uninstalling brings the banner straight back. */
 function pwaInit(){
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("/sw.js").catch(()=>{}); }
   const standalone = ()=> (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true;
-  if(standalone()) return; // already installed — nothing to show
+  if(standalone()) return; // genuinely installed — nothing to show
   const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  let deferred = null, dismissed = false;
+  let deferred = null;
 
   function ensureBanner(){
     let b = document.getElementById("pwaBanner");
@@ -2124,27 +2130,38 @@ function pwaInit(){
     document.body.appendChild(b);
     return b;
   }
-  function close(){ dismissed=true; const b=document.getElementById("pwaBanner"); if(b) b.style.display="none"; }
+  function hide(){ // only ever called once the app really is installed
+    const b=document.getElementById("pwaBanner"); if(b) b.style.display="none";
+    document.body.classList.remove("pwa-on");
+  }
   function showAndroid(){
-    if(dismissed) return;
     const b=ensureBanner();
-    b.innerHTML = `<div class="pi"><b>${t("pwa_title")}</b>${t("pwa_android_d")}</div>
-      <button class="pgo" id="pwaGo">${t("pwa_install_btn")}</button><button class="px" id="pwaX">✕</button>`;
-    b.style.display="flex";
-    b.querySelector("#pwaX").onclick=close;
-    b.querySelector("#pwaGo").onclick=async ()=>{ if(!deferred) return; deferred.prompt(); try{ await deferred.userChoice; }catch(e){} deferred=null; close(); };
+    // the label states what it does — no sub-line, no separate Install button
+    b.innerHTML = `<button id="pwaGo">${t("pwa_title")}</button>`;
+    b.style.display="block";
+    document.body.classList.add("pwa-on");
+    b.querySelector("#pwaGo").onclick=async ()=>{
+      if(!deferred) return;
+      deferred.prompt();
+      try{ await deferred.userChoice; }catch(e){}
+      deferred=null;
+      // if they declined, the banner stays — only "appinstalled" removes it
+    };
   }
   function showIOS(){
-    if(dismissed) return;
     const b=ensureBanner();
-    b.innerHTML = `<div class="pi"><b>${t("pwa_title")}</b>${t("pwa_ios_d")}</div>
-      <button class="px" id="pwaX">✕</button>`;
-    b.style.display="flex";
-    b.querySelector("#pwaX").onclick=close;
+    // Safari cannot be prompted, so tapping reveals the Share -> Add to Home Screen steps
+    b.innerHTML = `<button id="pwaIos">${t("pwa_title")}</button>
+      <div class="pios hide" id="pwaIosHint">${t("pwa_ios_d")}</div>`;
+    b.style.display="block";
+    document.body.classList.add("pwa-on");
+    b.querySelector("#pwaIos").onclick=()=>{
+      b.querySelector("#pwaIosHint").classList.toggle("hide");
+    };
   }
 
   window.addEventListener("beforeinstallprompt", (e)=>{ e.preventDefault(); deferred=e; showAndroid(); });
-  window.addEventListener("appinstalled", ()=> close());
+  window.addEventListener("appinstalled", ()=> hide());
   if(isiOS) setTimeout(showIOS, 800); // Safari has no prompt event — show the manual hint
 }
 </script>
