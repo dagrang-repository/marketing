@@ -422,12 +422,15 @@ export default {
         let body = {}; try { body = await req.json(); } catch (e) {}
         const name   = String(body.name    || "").trim().slice(0, 80);
         const email  = String(body.email   || "").trim().slice(0, 120);
+        // the apply form now collects a WhatsApp number instead of a city;
+        // `city` is still accepted so older cached clients keep working
+        const wa     = String(body.wa      || "").trim().slice(0, 40);
         const city   = String(body.city    || "").trim().slice(0, 80);
         const msg    = String(body.message || "").trim().slice(0, 1000);
         const gender = (String(body.gender || "").trim().toLowerCase() === "female") ? "female"
                      : (String(body.gender || "").trim().toLowerCase() === "male")   ? "male" : "";
         const photo  = String(body.photo || "").startsWith("data:image/") ? String(body.photo).slice(0, 400000) : "";
-        if (!name || !email || !city || !gender) return json({ error: "name_email_city_gender_required" }, 400);
+        if (!name || !email || !(wa || city) || !gender) return json({ error: "name_email_wa_gender_required" }, 400);
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "bad_email" }, 400);
         // soft anti-spam: cap applications per IP per hour (reuses RL_IP_PER_HOUR, min 5)
         const cap  = Math.max(parseInt(env.RL_IP_PER_HOUR || "15", 10), 5);
@@ -438,7 +441,7 @@ export default {
         if (aN >= cap) return json({ error: "rate_limited", message: "Too many applications from this connection. Please try again later." }, 429);
         await env.STORE.put(aKey, String(aN + 1), { expirationTtl: 3700 });
         const apps = (await kvGet(env, "applications")) || [];
-        apps.unshift({ id: rid("app_"), name, email, msg, city, gender, photo, ts: now() });
+        apps.unshift({ id: rid("app_"), name, email, msg, wa, city, gender, photo, ts: now() });
         if (apps.length > 200) apps.length = 200; // keep only the newest 200
         await kvPut(env, "applications", apps);
         return json({ ok: true });
@@ -481,6 +484,7 @@ export default {
         const wccy  = String(b.currency || cfg.currency || "PHP");
         const wlang = String(b.lang || "en");
         const wcity = (b.city !== undefined ? String(b.city) : (a.city || "")).trim().slice(0, 80);
+        const wwa   = (b.wa   !== undefined ? String(b.wa)   : (a.wa   || "")).trim().slice(0, 40);
         const wgender = (() => { const g = String(b.gender !== undefined ? b.gender : (a.gender || "")).trim().toLowerCase();
           return g === "female" ? "female" : g === "male" ? "male" : ""; })();
         const wphoto = (b.photo !== undefined)
@@ -489,15 +493,15 @@ export default {
         // an edited email re-targets which account this becomes / reuses
         const wemail = (b.email !== undefined && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(b.email).trim()))
           ? String(b.email).trim().slice(0, 120) : a.email;
-        a.email = wemail; a.city = wcity; a.gender = wgender; a.photo = wphoto; a.name = wname;
+        a.email = wemail; a.city = wcity; a.wa = wwa; a.gender = wgender; a.photo = wphoto; a.name = wname;
         let w = await workerByEmail(env, wemail);
         const reused = !!w;
         if (!w) {
           let gate = wname.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "W";
           while (await workerByGate(env, gate)) gate = (gate.slice(0, 6) + genCode().slice(0, 2)).slice(0, 8);
           w = { id: rid("w_"), name: wname, email: wemail, code: gate, payout: "",
-            currency: wccy, lang: wlang, city: wcity, gender: wgender,
-            phone: "", photo: wphoto, bank: null, bankStatus: "",
+            currency: wccy, lang: wlang, city: wcity, wa: wwa, gender: wgender,
+            phone: wwa, photo: wphoto, bank: null, bankStatus: "",
             confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
             note: "", banned: false, warned: false, payoutReq: false, provTs: now() };
           await saveWorker(env, w);
@@ -505,6 +509,7 @@ export default {
         } else {
           w.currency = wccy; w.lang = wlang; w.name = wname;
           if (wcity) w.city = wcity;
+          if (wwa) { w.wa = wwa; if (!w.phone) w.phone = wwa; }
           if (wgender) w.gender = wgender;
           if (wphoto) w.photo = wphoto;
           await saveWorker(env, w);
