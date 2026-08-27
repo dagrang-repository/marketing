@@ -1491,12 +1491,11 @@ function workerExpand(w){
     </div>
     ${tags?`<div class="wexp-tags">${tags}</div>`:''}
     <div class="wexp-sec">
-      <div class="wexp-lh">Display currency ${w.ccyLock?'<span class="wtag req">locked to your pick</span>':'<span class="wtag warn">worker can change it</span>'}</div>
+      <div class="wexp-lh">Display currency</div>
       <div class="wexp-link" style="flex-wrap:wrap;gap:6px">
-        <select data-wccy="${w.id}" style="flex:1;min-width:120px;font-size:12px">${ccyOptions(wc)}</select>
-        ${ w.ccyLock ? `<button class="btn ghost sm" data-ccyunlock="${w.id}">Unlock</button>` : '' }
+        <span><b>${wc}</b>${w.ccyLock?'':' — they can still change it'}</span>
+        ${ w.ccyLock && wc==='PHP' ? '' : `<button class="btn ghost sm" data-ccyphp="${w.id}">Set to PHP</button>` }
       </div>
-      <div class="mut" style="font-size:11.5px;margin-top:4px">Earnings are PHP. Picking here sets theirs and locks it.</div>
     </div>
     ${clickBreakdown(w)}
     <div class="wexp-sec">
@@ -1685,15 +1684,10 @@ function wireAdmin(){
   document.querySelectorAll("[data-paycancel]").forEach(btn=> btn.onclick=()=> cancelPay(btn.dataset.paycancel, btn));
   document.querySelectorAll("[data-casharm]").forEach(btn=> btn.onclick=()=> armCash(btn.dataset.casharm, btn));
   document.querySelectorAll("[data-cashdisarm]").forEach(btn=> btn.onclick=()=> disarmCash(btn.dataset.cashdisarm, btn));
-  document.querySelectorAll("[data-wccy]").forEach(sel=> sel.onchange = async ()=>{
-    sel.disabled=true;
-    try{ await api("/worker/currency","POST",{ workerId:sel.dataset.wccy, currency:sel.value, lock:true }); await refresh(); }
-    catch(e){ sel.disabled=false; alert("Couldn't set the currency: "+e.message); }
-  });
-  document.querySelectorAll("[data-ccyunlock]").forEach(btn=> btn.onclick = async ()=>{
-    btn.disabled=true;
-    try{ await api("/worker/currency","POST",{ workerId:btn.dataset.ccyunlock, lock:false }); await refresh(); }
-    catch(e){ btn.disabled=false; alert("Couldn't unlock: "+e.message); }
+  document.querySelectorAll("[data-ccyphp]").forEach(btn=> btn.onclick = async ()=>{
+    btn.disabled=true; btn.textContent="…";
+    try{ await api("/worker/currency","POST",{ workerId:btn.dataset.ccyphp, currency:"PHP", lock:true }); await refresh(); }
+    catch(e){ btn.disabled=false; btn.textContent="Set to PHP"; alert("Couldn't set it: "+e.message); }
   });
   document.querySelectorAll("[data-mapip]").forEach(sel=> sel.onchange = async ()=>{
     const siteId=sel.value; if(!siteId) return;

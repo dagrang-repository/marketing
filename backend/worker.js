@@ -592,17 +592,18 @@ export default {
         return json({ ok: true, currency: w.currency });
       }
 
-      /* ---- admin: set a worker's display currency, and lock it to that pick ---- */
+      /* ---- admin: set a worker's display currency. The lock is PERMANENT by
+         design — Sang's pick is absolute and there is no unlock path. ---- */
       if (p === "/worker/currency" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { workerId, currency, lock } = await req.json();
+        const { workerId, currency } = await req.json();
         const w = await kvGet(env, "worker:" + workerId);
         if (!w) return json({ error: "no_worker" }, 404);
-        if (currency) w.currency = String(currency);
-        w.ccyLock = lock === false ? false : true;   // setting a currency locks it unless explicitly unlocking
+        w.currency = String(currency || "PHP");
+        w.ccyLock = true;
         await saveWorker(env, w);
-        return json({ ok: true, currency: w.currency, ccyLock: !!w.ccyLock });
+        return json({ ok: true, currency: w.currency, ccyLock: true });
       }
 
       /* ---- worker: submit bank/RIB details (locks until admin reopens) ---- */
