@@ -166,6 +166,30 @@ function buildTrackingLinkSrv(baseUrl, gate, owned, apiOrigin) {
   if (owned) return u.origin + "/r/" + encodeURIComponent(gate);
   return apiOrigin.replace(/\/$/, "") + "/go/" + encodeURIComponent(gate) + "?u=" + encodeURIComponent(u.toString());
 }
+/* The Worker's own public origin — used to build /go/ links when there is no
+   incoming request to read it from (i.e. the cron). */
+const API_ORIGIN_FALLBACK = "https://marketing-foundation.dagrang.workers.dev";
+
+/* BACK-FILL: every worker × every registered site must have a link.
+   createLinksForNewWorker/createLinksForNewSite only fire at CREATION time, so
+   anyone who existed before a feature or a site shipped ended up with nothing.
+   This closes that gap permanently. Pure function over arrays already in hand:
+   add-only, idempotent, same dedup key as POST /links, and it reports how many
+   it added so the caller only writes KV when something was actually missing. */
+function backfillLinks(workers, sites, links, apiOrigin) {
+  let added = 0;
+  for (const w of workers || []) {
+    for (const site of sites || []) {
+      if (links.some((l) => l.workerId === w.id && (l.source || "") === "" && l.siteId === site.id)) continue;
+      links.push({ id: rid("lk_"), workerId: w.id, siteId: site.id, baseUrl: site.url, owned: !!site.owned,
+        label: deriveLabelSrv(site.url), coded: buildTrackingLinkSrv(site.url, w.code, !!site.owned, apiOrigin),
+        title: site.name || "", desc: "", source: "", status: "active", ts: now() });
+      added++;
+    }
+  }
+  return added;
+}
+
 /* One link per registered site, auto-filled the instant a worker account is
    created — mirrors "Generate for ALL" so nobody ever opens an empty page.
    Same dedup key as POST /links (workerId+source+siteId), so it's safe to
@@ -543,7 +567,12 @@ export default {
         const sorted = all.sort((a, b) => (b.balance - a.balance) || ((b.confirmed||0) - (a.confirmed||0)));
         const rank = sorted.findIndex((x) => x.id === w.id) + 1;
         const payments = ((await kvGet(env, "payments")) || []).filter((x) => x.workerId === w.id).sort((a, b) => b.ts - a.ts);
-        const myLinks = (await getLinks(env)).filter((l) => l.workerId === w.id);
+        // self-heal here too: a worker opening their page before the admin
+        // touches the board must still find their links waiting.
+        const allLinks = await getLinks(env);
+        const filledMe = backfillLinks([w], await getSites(env), allLinks, url.origin);
+        if (filledMe) await kvPut(env, "links", allLinks);
+        const myLinks = allLinks.filter((l) => l.workerId === w.id);
         const allMsgs = (await kvGet(env, "messages")) || [];
         const messages = allMsgs
           .filter((m) => m.workerId == null || m.workerId === w.id)
@@ -651,12 +680,19 @@ export default {
         all.sort((a, b) => (b.balance - a.balance) || ((b.confirmed||0) - (a.confirmed||0)));
         const workers = all.map(({ payout, ...pub }) => ({ ...pub }));
         const cfg = (await kvGet(env, "config")) || {};
+        // self-heal: anyone missing a link for a registered site gets one now.
+        // Reuses arrays this endpoint already loads, so no extra reads, and it
+        // only writes when something was genuinely missing.
+        const sites = await getSites(env);
+        const links = await getLinks(env);
+        const filled = backfillLinks(all, sites, links, url.origin);
+        if (filled) await kvPut(env, "links", links);
         return json({
           workers,
           messages: ((await kvGet(env, "messages")) || []).sort((a, b) => b.ts - a.ts),
           defaultCurrency: cfg.currency || "PHP",
-          sites: await getSites(env),
-          links: await getLinks(env),
+          sites,
+          links,
           payments: (await kvGet(env, "payments")) || [],
           applications: (await kvGet(env, "applications")) || [],
           ipsite: (await kvGet(env, "ipsite")) || {},
@@ -1192,7 +1228,17 @@ export default {
       if (w.provTs && (t - w.provTs) > PROV_TTL_MS) await removeWorkerEverywhere(env, w.id);
     }
 
-    // (3) Add-only reconcile — TODO when the in-house click method exists: pull its
+    // (3) Link back-fill — every worker × every registered site. Add-only and
+    //     idempotent, so it silently fixes anyone who predates a feature or a
+    //     site. Runs after the provisional sweep so deleted accounts are gone.
+    const liveW = await listWorkers(env);
+    const sitesC = await getSites(env);
+    const linksC = await getLinks(env);
+    if (backfillLinks(liveW, sitesC, linksC, env.API_ORIGIN || API_ORIGIN_FALLBACK)) {
+      await kvPut(env, "links", linksC);
+    }
+
+    // (4) Add-only reconcile — TODO when the in-house click method exists: pull its
     //     totals, compare to a stored "totals:<gate>" snapshot, credit ONLY positive
     //     deltas (never subtract). Balance stays monotonic.
     return;

@@ -253,8 +253,11 @@
   .l1[data-expand]{cursor:pointer; display:flex; align-items:center; gap:8px}
   .chev{margin-left:auto; color:var(--ink-soft); font-size:12px; transition:transform .2s ease}
   .wrow.open .chev{transform:rotate(90deg)}
-  .wexp{overflow:hidden; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); animation:wexpIn .22s ease both}
-  @keyframes wexpIn{from{opacity:0; transform:translateY(-4px); max-height:0}to{opacity:1; transform:none; max-height:640px}}
+  /* NOTE: no overflow:hidden and no max-height cap here. The open animation
+     used to end at max-height:640px, which silently CLIPPED everything past
+     that — the Links block sits last, so it vanished as the card grew. */
+  .wexp{margin-top:10px; padding-top:10px; border-top:1px solid var(--line); animation:wexpIn .22s ease both}
+  @keyframes wexpIn{from{opacity:0; transform:translateY(-4px)}to{opacity:1; transform:none}}
   .wexp-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px}
   .wexp-grid>div{background:var(--paper); border:1px solid var(--line); border-radius:var(--r-sm); padding:7px 9px}
   .wexp-grid span{display:block; font-size:11px; color:var(--ink-soft)}
@@ -1490,11 +1493,11 @@ function workerExpand(w){
       <div><span>Paid total</span><b>${money(w.paidTotal||0,wc)}</b></div>
     </div>
     ${tags?`<div class="wexp-tags">${tags}</div>`:''}
+    <div class="wexp-sec"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
     <div class="wexp-sec">
       <div class="wexp-lh">Display currency</div>
       <div class="wexp-link" style="flex-wrap:wrap;gap:6px">
-        <span><b>${wc}</b>${w.ccyLock?'':' — they can still change it'}</span>
-        ${ w.ccyLock && wc==='PHP' ? '' : `<button class="btn ghost sm" data-ccyphp="${w.id}">Set to PHP</button>` }
+        <select data-wccy="${w.id}" style="flex:1;min-width:130px;font-size:12px">${ccyOptions(wc)}</select>
       </div>
     </div>
     ${clickBreakdown(w)}
@@ -1524,7 +1527,6 @@ function workerExpand(w){
         ${w.photo?`<button class="btn ghost sm" data-photoclear="${w.id}">Remove photo</button>`:''}
       </div>
     </div>
-    <div class="wexp-sec"><div class="wexp-lh">Link${links.length===1?'':'s'} (carries code ${w.code})</div>${linkRows}</div>
   </div>`;
 }
 function adminApplications(){
@@ -1684,10 +1686,10 @@ function wireAdmin(){
   document.querySelectorAll("[data-paycancel]").forEach(btn=> btn.onclick=()=> cancelPay(btn.dataset.paycancel, btn));
   document.querySelectorAll("[data-casharm]").forEach(btn=> btn.onclick=()=> armCash(btn.dataset.casharm, btn));
   document.querySelectorAll("[data-cashdisarm]").forEach(btn=> btn.onclick=()=> disarmCash(btn.dataset.cashdisarm, btn));
-  document.querySelectorAll("[data-ccyphp]").forEach(btn=> btn.onclick = async ()=>{
-    btn.disabled=true; btn.textContent="…";
-    try{ await api("/worker/currency","POST",{ workerId:btn.dataset.ccyphp, currency:"PHP", lock:true }); await refresh(); }
-    catch(e){ btn.disabled=false; btn.textContent="Set to PHP"; alert("Couldn't set it: "+e.message); }
+  document.querySelectorAll("[data-wccy]").forEach(sel=> sel.onchange = async ()=>{
+    sel.disabled=true;
+    try{ await api("/worker/currency","POST",{ workerId:sel.dataset.wccy, currency:sel.value }); await refresh(); }
+    catch(e){ sel.disabled=false; alert("Couldn't set the currency: "+e.message); }
   });
   document.querySelectorAll("[data-mapip]").forEach(sel=> sel.onchange = async ()=>{
     const siteId=sel.value; if(!siteId) return;
