@@ -1,32 +1,37 @@
 # Cloudflare Worker config for the Payment Foundation backend (worker.js)
-# Deploy with:  wrangler deploy
+# Deploy with:  wrangler deploy   (also registers the cron trigger below)
 #
-# 1) Create the KV namespace (one time), then paste the id below:
-#      wrangler kv namespace create STORE
-#    Wrangler prints an id like:  id = "a1b2c3d4e5f6..."  — copy it into kv_namespaces.id
+# 1) KV namespace (one time):  wrangler kv namespace create STORE
+#    then paste the printed id into kv_namespaces.id below.
 #
-# 2) Secrets are NOT stored in this file. Set each with `wrangler secret put NAME`:
-#      ADMIN_EMAIL            your command-board email
-#      RESEND_API_KEY         re_...  (sends login codes + payment confirmations)
+# 2) Secrets are NOT stored here. Set each with `wrangler secret put NAME`:
+#      ADMIN_EMAIL            command-board email
+#      RESEND_API_KEY         re_...  (login codes + payment-sent emails)
 #      MAIL_FROM              "Marketing <no-reply@yourdomain.com>"  (verified Resend sender)
-#      VELIANE_SECRET         shared secret your OWNED sites send in the x-veliane-secret header.
-#                             Used by /veliane/signup, /veliane/activity, /veliane/intake AND
-#                             /owned/click — this single secret covers every site you own.
+#      VELIANE_SECRET         shared secret your OWNED sites send in x-veliane-secret.
+#                             Covers /veliane/signup, /veliane/activity, /veliane/intake
+#                             AND /owned/click — one secret for every site you own.
 #      STRIPE_WEBHOOK_SECRET  whsec_...  (only if you credit purchases via Stripe)
-#      CLICKMAGICK_SECRET     intake secret for the generic tracker endpoint /clickmagick/event
-#                             (legacy name — the in-house click method renames it later).
+#      TRACK_SECRET           x-track-secret for /track/event (your in-house tracker).
+#                             OPTIONAL — if unset, /track/event falls back to VELIANE_SECRET.
 #
-# Optional tunables (have safe defaults in code — set only to override):
+# Optional tunables (safe defaults in code — set only to override), via
+# `wrangler secret put` or the [vars] block below:
 #      STRIPE_CREDIT          "1" to credit purchases on the Stripe webhook (default OFF)
 #      HOLD_DAYS              days a signup is held before the day-3 active recheck (default 3)
 #      ACTIVE_WINDOW_DAYS     "active" = seen within this many days at recheck (default 2)
+#      RL_EMAIL_PER_HOUR      /auth/request code requests per email per hour (default 7)
+#      RL_IP_PER_HOUR         /auth/request code requests per IP per hour (default 15)
+#      CLUSTER_WARN           city-cluster clicks that flag a WARN (default 2000)
+#      CLUSTER_BAN            city-cluster clicks that AUTO-BAN (default 4000)
 #
-# FRAUD DETECTION is GEO-SPREAD (built with the in-house click method): clicks
-# scattered across locations are legit at any volume; clicks concentrated in one
-# ~200 m radius are fake — WARN 150 / BAN 300. It needs per-click geo-coordinates,
-# so it is a STUB in worker.js for now. There are NO per-IP click tunables.
+# FRAUD DETECTION = CITY-CLUSTER (LIVE): clicks tallied per coarse geo
+# (country|region|city). Spread across many cities -> never flagged.
+# Concentrated in one city -> WARN at CLUSTER_WARN, AUTO-BAN at CLUSTER_BAN.
+# Ban only; earned balance is never reduced. Geo comes from owned sites
+# (request body) and from the /go redirector (request.cf).
 #
-# NOTE: sessions do NOT expire on a device (persistent token), so there is no SESSION_TTL_HOURS.
+# SESSIONS do NOT expire on a device (persistent token) — no SESSION_TTL_HOURS.
 
 name = "marketing-foundation"
 main = "worker.js"
@@ -36,7 +41,16 @@ compatibility_date = "2024-11-01"
 binding = "STORE"
 id = "7351968bf87d41979df8a0ebe99cabc7"
 
-# Non-secret defaults may go here if you prefer (optional). Secrets must use `wrangler secret put`.
+# Daily cron (03:00 UTC) — resolves day-3 owned-site signups and runs the
+# add-only reconcile. REQUIRED for the worker.js-owned signup flow to credit.
+[triggers]
+crons = ["0 3 * * *"]
+
+# Optional non-secret defaults (uncomment to override the code defaults):
 # [vars]
 # HOLD_DAYS = "3"
 # ACTIVE_WINDOW_DAYS = "2"
+# RL_EMAIL_PER_HOUR = "7"
+# RL_IP_PER_HOUR = "15"
+# CLUSTER_WARN = "2000"
+# CLUSTER_BAN = "4000"

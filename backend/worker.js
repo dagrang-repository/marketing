@@ -23,7 +23,7 @@
      mean the link is NOT spreading — likely farmed. (Per-IP counting
      is inadequate: a family compound has many phones/IPs in one
      place.) Tally is per coarse geo: WARN at CLUSTER_WARN (default
-     2000) sets a red notice on the worker's board; AUTO-BAN at
+     2000) sets a red warning flag on the worker's board; AUTO-BAN at
      CLUSTER_BAN (default 4000). Both tunable via [vars]. Clicks are
      dust (₱1 per 3) so thresholds are lenient. Geo is supplied by
      owned sites (request body) and by the /go redirector (request.cf);
@@ -34,6 +34,13 @@
 
    SESSION: does NOT expire on a device (persistent token). The
    login CODE expires in 10 minutes.
+
+   PROVISIONAL ACCOUNTS (job applications): admin presses "Add worker"
+   ONCE on an application -> account is created (or reused if the email
+   already exists) + the applicant is emailed a 72-HOUR code with a
+   prefilled login link. First successful code login = permanent (and
+   the application row disappears). No login within 72h -> the account
+   AND its application auto-delete (cron sweep + login-time check).
 
    STORAGE: Cloudflare KV (binding: STORE).
 
@@ -79,6 +86,8 @@ function okVeliane(req, env) {
 }
 
 const CODE_TTL_SEC = 10 * 60;
+const PROV_TTL_MS = 72 * 3600 * 1000;     // provisional account life (no activity -> vanish)
+const PROV_CODE_TTL_SEC = 72 * 3600;      // the emailed application code lives exactly as long
 const now = () => Date.now();
 const rid = (p) => p + crypto.randomUUID().replace(/-/g, "").slice(0, 14);
 
@@ -129,8 +138,73 @@ async function workerByEmail(env, email) {
   const all = await listWorkers(env);
   return all.find((w) => w.email.toLowerCase() === String(email).toLowerCase()) || null;
 }
+/* delete a worker everywhere it lives: record, index, links, application rows */
+async function removeWorkerEverywhere(env, workerId) {
+  await kvDel(env, "worker:" + workerId);
+  const idx = ((await kvGet(env, "idx:workers")) || []).filter((x) => x !== workerId);
+  await kvPut(env, "idx:workers", idx);
+  await kvPut(env, "links", (await getLinks(env)).filter((l) => l.workerId !== workerId));
+  await kvPut(env, "applications", ((await kvGet(env, "applications")) || []).filter((a) => a.workerId !== workerId));
+}
 async function getSites(env) { return (await kvGet(env, "sites")) || []; }
 async function getLinks(env) { return (await kvGet(env, "links")) || []; }
+
+/* ---------- link-engine mirror (server-side) ----------
+   Must build the exact same "coded" URL the admin's Generate button builds
+   client-side, so an auto-filled link is indistinguishable from a manual one. */
+function deriveLabelSrv(url) {
+  try {
+    const h = new URL(/^https?:\/\//i.test(url) ? url : "https://" + url).hostname.replace(/^www\./, "");
+    const core = h.split(".")[0] || "site";
+    return core.charAt(0).toUpperCase() + core.slice(1);
+  } catch (e) { return "Site"; }
+}
+function buildTrackingLinkSrv(baseUrl, gate, owned, apiOrigin) {
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(baseUrl) ? baseUrl : "https://" + baseUrl); }
+  catch (e) { return baseUrl; }
+  if (owned) return u.origin + "/r/" + encodeURIComponent(gate);
+  return apiOrigin.replace(/\/$/, "") + "/go/" + encodeURIComponent(gate) + "?u=" + encodeURIComponent(u.toString());
+}
+/* One link per registered site, auto-filled the instant a worker account is
+   created — mirrors "Generate for ALL" so nobody ever opens an empty page.
+   Same dedup key as POST /links (workerId+source+siteId), so it's safe to
+   call again later (e.g. admin re-runs mass-generate) without duplicating rows. */
+async function createLinksForNewWorker(env, w, apiOrigin) {
+  const sites = await getSites(env);
+  if (!sites.length) return;
+  const links = await getLinks(env);
+  let changed = false;
+  for (const site of sites) {
+    const ex = links.find((l) => l.workerId === w.id && (l.source || "") === "" && l.siteId === site.id);
+    if (ex) continue;
+    const coded = buildTrackingLinkSrv(site.url, w.code, !!site.owned, apiOrigin);
+    links.push({ id: rid("lk_"), workerId: w.id, siteId: site.id, baseUrl: site.url, owned: !!site.owned,
+      label: deriveLabelSrv(site.url), coded, title: site.name || "", desc: "", source: "", status: "active", ts: now() });
+    changed = true;
+  }
+  if (changed) await kvPut(env, "links", links);
+}
+/* Symmetric to createLinksForNewWorker: the instant a NEW SITE is registered,
+   every EXISTING worker gets a link to it too. So a durable code (e.g. a
+   standing test account) always has a current link for whatever site goes
+   live next — no manual "Generate for ALL", no new code to hand a webmaster
+   ever again. Same dedup key, safe to call repeatedly. */
+async function createLinksForNewSite(env, site, apiOrigin) {
+  const workers = await listWorkers(env);
+  if (!workers.length) return;
+  const links = await getLinks(env);
+  let changed = false;
+  for (const w of workers) {
+    const ex = links.find((l) => l.workerId === w.id && (l.source || "") === "" && l.siteId === site.id);
+    if (ex) continue;
+    const coded = buildTrackingLinkSrv(site.url, w.code, !!site.owned, apiOrigin);
+    links.push({ id: rid("lk_"), workerId: w.id, siteId: site.id, baseUrl: site.url, owned: !!site.owned,
+      label: deriveLabelSrv(site.url), coded, title: site.name || "", desc: "", source: "", status: "active", ts: now() });
+    changed = true;
+  }
+  if (changed) await kvPut(env, "links", links);
+}
 
 /* ---------- auth (persistent session; code expires) ---------- */
 async function requireSession(env, req) {
@@ -148,13 +222,29 @@ function genCode() {
 }
 
 /* ---------- email (Resend) ---------- */
+/* Returns {ok, reason, detail} — NEVER throws, so a mail problem can't take an
+   endpoint down, but callers can now SEE a failure instead of assuming success.
+   The old version awaited the fetch and ignored the response entirely: a bad key,
+   an unverified sender domain, a rejected recipient or a rate-limit all looked
+   exactly like a successful send. That is why "code sent" could be a lie. */
 async function sendEmail(env, to, subject, text) {
-  if (!env.RESEND_API_KEY) { console.log("[mail skipped]", to, subject); return; }
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
-    body: JSON.stringify({ from: env.MAIL_FROM || "Marketing <onboarding@resend.dev>", to, subject, text }),
-  });
+  if (!env.RESEND_API_KEY) { console.log("[mail SKIPPED — no RESEND_API_KEY]", to, subject); return { ok: false, reason: "no_api_key" }; }
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ from: env.MAIL_FROM || "Marketing <onboarding@resend.dev>", to, subject, text }),
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      console.log("[mail FAILED]", r.status, to, subject, body.slice(0, 300));
+      return { ok: false, reason: "provider_" + r.status, detail: body.slice(0, 300) };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.log("[mail ERROR]", to, subject, String(e));
+    return { ok: false, reason: "network", detail: String(e) };
+  }
 }
 
 /* ---------- Stripe signature verify (Web Crypto) ---------- */
@@ -232,7 +322,28 @@ async function countDust(env, w, geo) {
   return w;
 }
 
-/* ============================================================ router ============================================================ */
+/* ---------- per-site click attribution ----------
+   The gate code is deliberately identical across every site, so the ping alone
+   cannot say which site a click came from. Two signals, in order:
+     1. an explicit `site` in the ping (id, hostname or URL) — exact
+     2. otherwise the calling server's IP, stored as "ip:1.2.3.4"
+   Unmapped IP buckets are resolved at DISPLAY time through the `ipsite` map, so
+   the moment the admin labels an IP once, every past AND future click from that
+   server relabels itself. Nothing to migrate, no webmaster coordination. */
+function hostOf(u) {
+  try { return new URL(/^https?:\/\//i.test(u) ? u : "https://" + u).hostname.replace(/^www\./, "").toLowerCase(); }
+  catch (e) { return String(u || "").trim().toLowerCase().replace(/^www\./, ""); }
+}
+function siteBucket(sites, hint, ip) {
+  if (hint) {
+    const raw = String(hint).trim();
+    const h = hostOf(raw), lc = raw.toLowerCase();
+    const hit = (sites || []).find((x) => x.id === raw || hostOf(x.url) === h || String(x.name || "").toLowerCase() === lc);
+    if (hit) return hit.id;
+  }
+  return ip ? "ip:" + ip : "unknown";
+}
+function tally(obj, key, n) { const o = obj || {}; o[key] = (o[key] || 0) + (n || 1); return o; }
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { headers: cors() });
@@ -245,7 +356,12 @@ export default {
         const { email } = await req.json();
         if (!email) return json({ error: "email required" }, 400);
         const isAdmin = email.toLowerCase() === (env.ADMIN_EMAIL || "").toLowerCase();
-        const w = await workerByEmail(env, email);
+        let w = await workerByEmail(env, email);
+        // login-time check: an unactivated provisional past 72h is gone (account + application)
+        if (w && w.provTs && (now() - w.provTs) > PROV_TTL_MS) {
+          await removeWorkerEverywhere(env, w.id);
+          w = null;
+        }
         if (!isAdmin && !w) return json({ error: "not_registered" }, 403);
 
         // hourly buckets auto-expire; defaults 7/email, 15/IP per hour (override via env)
@@ -264,7 +380,13 @@ export default {
 
         const code = genCode();
         await kvPut(env, "code:" + email.toLowerCase(), { code, role: isAdmin ? "admin" : "worker", workerId: w ? w.id : null }, CODE_TTL_SEC);
-        await sendEmail(env, email, "Your sign-in code", `Your code is ${code}. It expires in 10 minutes.`);
+        const sent = await sendEmail(env, email, "Your sign-in code",
+          `Your code is ${code}. It expires in 10 minutes.\n\nIf this lands in Spam or Junk, please mark it "Not spam" so the next one reaches your inbox.`);
+        if (!sent.ok) {
+          // The code IS stored — but do not claim it was emailed when it was not.
+          console.log("[auth mail failed]", email, sent.reason, sent.detail || "");
+          return json({ error: "mail_failed", reason: sent.reason }, 502);
+        }
         return json({ ok: true });
       }
 
@@ -274,12 +396,128 @@ export default {
         const rec = await kvGet(env, "code:" + String(email).toLowerCase());
         if (!rec || rec.code !== String(code).toUpperCase()) return json({ error: "bad_code" }, 401);
         await kvDel(env, "code:" + String(email).toLowerCase());
+        // first code login ACTIVATES a provisional account (expired ones are swept here too)
+        if (rec.workerId) {
+          const wv = await kvGet(env, "worker:" + rec.workerId);
+          if (!wv) return json({ error: "bad_code" }, 401);
+          if (wv.provTs && (now() - wv.provTs) > PROV_TTL_MS) {
+            await removeWorkerEverywhere(env, wv.id);
+            return json({ error: "bad_code" }, 401);
+          }
+          if (wv.provTs) { delete wv.provTs; await saveWorker(env, wv); } // permanent
+          const apps0 = (await kvGet(env, "applications")) || [];
+          const apps1 = apps0.filter((x) => x.workerId !== wv.id);
+          if (apps1.length !== apps0.length) await kvPut(env, "applications", apps1);
+        }
         const token = rid("s_") + crypto.randomUUID().replace(/-/g, "");
         const session = { email, role: rec.role, workerId: rec.workerId, since: now() };
         await kvPut(env, "session:" + token, session); // no TTL: persists on the device until signout
         let name = "Admin";
         if (rec.workerId) { const w = await kvGet(env, "worker:" + rec.workerId); name = w ? w.name : "Worker"; }
         return json({ token, role: rec.role, name });
+      }
+
+      /* ---- public: a "Jobs" visitor leaves an application (no login, no email sent) ---- */
+      if (p === "/apply" && req.method === "POST") {
+        let body = {}; try { body = await req.json(); } catch (e) {}
+        const name   = String(body.name    || "").trim().slice(0, 80);
+        const email  = String(body.email   || "").trim().slice(0, 120);
+        const city   = String(body.city    || "").trim().slice(0, 80);
+        const msg    = String(body.message || "").trim().slice(0, 1000);
+        const gender = (String(body.gender || "").trim().toLowerCase() === "female") ? "female"
+                     : (String(body.gender || "").trim().toLowerCase() === "male")   ? "male" : "";
+        const photo  = String(body.photo || "").startsWith("data:image/") ? String(body.photo).slice(0, 400000) : "";
+        if (!name || !email || !city || !gender) return json({ error: "name_email_city_gender_required" }, 400);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "bad_email" }, 400);
+        // soft anti-spam: cap applications per IP per hour (reuses RL_IP_PER_HOUR, min 5)
+        const cap  = Math.max(parseInt(env.RL_IP_PER_HOUR || "15", 10), 5);
+        const ip   = req.headers.get("cf-connecting-ip") || "0";
+        const slot = Math.floor(Date.now() / 3600000);
+        const aKey = "rl:ap:" + ip + ":" + slot;
+        const aN   = parseInt((await env.STORE.get(aKey)) || "0", 10);
+        if (aN >= cap) return json({ error: "rate_limited", message: "Too many applications from this connection. Please try again later." }, 429);
+        await env.STORE.put(aKey, String(aN + 1), { expirationTtl: 3700 });
+        const apps = (await kvGet(env, "applications")) || [];
+        apps.unshift({ id: rid("app_"), name, email, msg, city, gender, photo, ts: now() });
+        if (apps.length > 200) apps.length = 200; // keep only the newest 200
+        await kvPut(env, "applications", apps);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: delete one application ---- */
+      if (p === "/apply/delete" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { id } = await req.json();
+        await kvPut(env, "applications", ((await kvGet(env, "applications")) || []).filter((a) => a.id !== id));
+        return json({ ok: true });
+      }
+
+      /* ---- admin: clear all applications ---- */
+      if (p === "/apply/clear" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        await kvPut(env, "applications", []);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: ONE press on an application = account + login email ----
+         New email  -> provisional worker (provTs) is created.
+         Known email -> the existing account is reused (no duplicate).
+         Either way the applicant gets ONE email: prefilled link + a 6-char
+         code valid 72h. The application row is marked "sent" (button locks).
+         Body: { id } ---- */
+      if (p === "/apply/create" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const b = await req.json();
+        const id = b.id;
+        const apps = (await kvGet(env, "applications")) || [];
+        const a = apps.find((x) => x.id === id);
+        if (!a) return json({ error: "no_application" }, 404);
+        if (a.sent) return json({ error: "already_sent" }, 409);
+        const cfg = (await kvGet(env, "config")) || {};
+        const wname = String(b.name || a.name || "").trim().slice(0, 80) || a.name;
+        const wccy  = String(b.currency || cfg.currency || "PHP");
+        const wlang = String(b.lang || "en");
+        const wcity = (b.city !== undefined ? String(b.city) : (a.city || "")).trim().slice(0, 80);
+        const wgender = (() => { const g = String(b.gender !== undefined ? b.gender : (a.gender || "")).trim().toLowerCase();
+          return g === "female" ? "female" : g === "male" ? "male" : ""; })();
+        const wphoto = (b.photo !== undefined)
+          ? (String(b.photo).startsWith("data:image/") ? String(b.photo).slice(0, 400000) : "")
+          : (a.photo || "");
+        // an edited email re-targets which account this becomes / reuses
+        const wemail = (b.email !== undefined && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(b.email).trim()))
+          ? String(b.email).trim().slice(0, 120) : a.email;
+        a.email = wemail; a.city = wcity; a.gender = wgender; a.photo = wphoto; a.name = wname;
+        let w = await workerByEmail(env, wemail);
+        const reused = !!w;
+        if (!w) {
+          let gate = wname.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "W";
+          while (await workerByGate(env, gate)) gate = (gate.slice(0, 6) + genCode().slice(0, 2)).slice(0, 8);
+          w = { id: rid("w_"), name: wname, email: wemail, code: gate, payout: "",
+            currency: wccy, lang: wlang, city: wcity, gender: wgender,
+            phone: "", photo: wphoto, bank: null, bankStatus: "",
+            confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
+            note: "", banned: false, warned: false, payoutReq: false, provTs: now() };
+          await saveWorker(env, w);
+          await createLinksForNewWorker(env, w, url.origin);
+        } else {
+          w.currency = wccy; w.lang = wlang; w.name = wname;
+          if (wcity) w.city = wcity;
+          if (wgender) w.gender = wgender;
+          if (wphoto) w.photo = wphoto;
+          await saveWorker(env, w);
+        }
+        const code = genCode();
+        await kvPut(env, "code:" + wemail.toLowerCase(), { code, role: "worker", workerId: w.id }, PROV_CODE_TTL_SEC);
+        a.sent = true; a.sentTs = now(); a.workerId = w.id;
+        await kvPut(env, "applications", apps);
+        const hireSent = await sendEmail(env, wemail, "Your account has been created",
+          `Hi ${w.name},\n\nYour account has been created.\n\nOpen this link:\nhttps://pay.veliane.org/?email=${encodeURIComponent(wemail)}\n\nThen enter this 6 character code: ${code}\n\nPlease sign in within 72 hours.\n\nIf this lands in Spam or Junk, please mark it "Not spam" so the next one reaches your inbox.`);
+        if (!hireSent.ok) console.log("[hire mail failed]", wemail, hireSent.reason, hireSent.detail || "");
+        // Account is created either way — but the admin must KNOW if the email bounced.
+        return json({ ok: true, workerId: w.id, code: w.code, reused, mailed: hireSent.ok, mailError: hireSent.ok ? "" : hireSent.reason });
       }
 
       /* ---- auth: signout (clears the device session) ---- */
@@ -301,15 +539,22 @@ export default {
         const rank = sorted.findIndex((x) => x.id === w.id) + 1;
         const payments = ((await kvGet(env, "payments")) || []).filter((x) => x.workerId === w.id).sort((a, b) => b.ts - a.ts);
         const myLinks = (await getLinks(env)).filter((l) => l.workerId === w.id);
-        const notice = (await kvGet(env, "notice")) || "";
+        const allMsgs = (await kvGet(env, "messages")) || [];
+        const messages = allMsgs
+          .filter((m) => m.workerId == null || m.workerId === w.id)
+          .sort((a, b) => b.ts - a.ts)
+          .map((m) => ({ id: m.id, text: m.text, ts: m.ts }));
         return json({
           id: w.id, code: w.code,
-          name: w.name, currency: w.currency || "PHP",
+          name: w.name, currency: w.currency || "PHP", lang: w.lang || "",
+          ccyLock: !!w.ccyLock,
           balance: w.balance || 0, pending: w.pending || 0,
           confirmed: w.confirmed || 0, clickPts: w.clickPts || 0,
           paidTotal: w.paidTotal || 0, rank, total: all.length,
           banned: !!w.banned, warned: !!w.warned, payoutReq: !!w.payoutReq,
-          note: w.note || "", notice,
+          // payout state — the cash button is dead unless payState === "cash_armed"
+          payState: w.payState || "", payPending: w.payPending || 0,
+          note: w.note || "", messages,
           phone: w.phone || "", photo: w.photo || "",
           bank: w.bank || null, bankStatus: w.bankStatus || "",
           links: myLinks, payments,
@@ -335,8 +580,24 @@ export default {
         const { currency } = await req.json();
         const w = await kvGet(env, "worker:" + s.workerId);
         if (!w) return json({ error: "not_found" }, 404);
+        // admin's pick is absolute while locked — earnings are PHP, the display
+        // should not drift to a currency that has nothing to do with the work
+        if (w.ccyLock) return json({ error: "currency_locked", currency: w.currency || "PHP" }, 409);
         w.currency = String(currency || "PHP"); await saveWorker(env, w);
         return json({ ok: true, currency: w.currency });
+      }
+
+      /* ---- admin: set a worker's display currency, and lock it to that pick ---- */
+      if (p === "/worker/currency" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId, currency, lock } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        if (currency) w.currency = String(currency);
+        w.ccyLock = lock === false ? false : true;   // setting a currency locks it unless explicitly unlocking
+        await saveWorker(env, w);
+        return json({ ok: true, currency: w.currency, ccyLock: !!w.ccyLock });
       }
 
       /* ---- worker: submit bank/RIB details (locks until admin reopens) ---- */
@@ -362,6 +623,20 @@ export default {
         return json({ workers: all.map(({ payout, ...pub }) => ({ ...pub, hasPayout: !!payout })) });
       }
 
+      /* ---- admin: label an unidentified click source (IP -> site), once.
+         Buckets resolve at display time, so this relabels every past and future
+         click from that server instantly. Pass siteId:"" to forget a mapping. ---- */
+      if (p === "/clicks/map-ip" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { ip, siteId } = await req.json();
+        if (!ip) return json({ error: "ip required" }, 400);
+        const map = (await kvGet(env, "ipsite")) || {};
+        if (siteId) map[String(ip)] = String(siteId); else delete map[String(ip)];
+        await kvPut(env, "ipsite", map);
+        return json({ ok: true, ipsite: map });
+      }
+
       /* ---- admin: one-shot board state (workers + notice + default currency + sites + links + payments) ---- */
       if (p === "/admin/state" && req.method === "GET") {
         const s = await requireSession(env, req);
@@ -372,11 +647,13 @@ export default {
         const cfg = (await kvGet(env, "config")) || {};
         return json({
           workers,
-          notice: (await kvGet(env, "notice")) || "",
+          messages: ((await kvGet(env, "messages")) || []).sort((a, b) => b.ts - a.ts),
           defaultCurrency: cfg.currency || "PHP",
           sites: await getSites(env),
           links: await getLinks(env),
           payments: (await kvGet(env, "payments")) || [],
+          applications: (await kvGet(env, "applications")) || [],
+          ipsite: (await kvGet(env, "ipsite")) || {},
           fx: await getFx(env),
         });
       }
@@ -396,6 +673,7 @@ export default {
           confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
           note: "", banned: false, warned: false, payoutReq: false };
         await saveWorker(env, w);
+        await createLinksForNewWorker(env, w, url.origin);
         return json({ ok: true, id: w.id, code: gate });
       }
 
@@ -467,6 +745,8 @@ export default {
         const { workerId } = await req.json();
         const w = await kvGet(env, "worker:" + workerId);
         if (!w) return json({ error: "no_worker" }, 404);
+        if (w.payState === "processing") return json({ error: "payout_processing" }, 409);
+        if (w.payState === "cash_armed") return json({ error: "cash_armed_remove" }, 409);
         await kvDel(env, "worker:" + workerId);
         const idx = ((await kvGet(env, "idx:workers")) || []).filter((x) => x !== workerId);
         await kvPut(env, "idx:workers", idx);
@@ -474,12 +754,44 @@ export default {
         return json({ ok: true });
       }
 
-      /* ---- admin: global notice shown to every worker ("" clears it) ---- */
-      if (p === "/notice" && req.method === "POST") {
+      /* ---- admin: send a message to ONE worker or ALL ----
+         Body: { text, workerId }  (workerId omitted/empty/"all" => broadcast)
+         Each send is a new dated entry. Nothing rewrites it later. ---- */
+      if (p === "/message" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { text } = await req.json();
-        await kvPut(env, "notice", String(text || ""));
+        const b = await req.json();
+        const text = String(b.text || "").trim().slice(0, 1000);
+        if (!text) return json({ error: "empty" }, 400);
+        let workerId = b.workerId;
+        if (!workerId || workerId === "all") {
+          workerId = null;
+        } else if (!(await kvGet(env, "worker:" + workerId))) {
+          return json({ error: "no_worker" }, 404);
+        }
+        const msgs = (await kvGet(env, "messages")) || [];
+        msgs.unshift({ id: rid("m_"), text, workerId: workerId, ts: now() });
+        if (msgs.length > 500) msgs.length = 500;
+        await kvPut(env, "messages", msgs);
+        return json({ ok: true });
+      }
+
+      /* ---- admin: delete one message (removed for everyone) ---- */
+      if (p === "/message/delete" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { id } = await req.json();
+        const msgs = (await kvGet(env, "messages")) || [];
+        const next = msgs.filter((m) => m.id !== id);
+        await kvPut(env, "messages", next);
+        return json({ ok: true, removed: msgs.length - next.length });
+      }
+
+      /* ---- admin: clear all messages ---- */
+      if (p === "/message/clear" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        await kvPut(env, "messages", []);
         return json({ ok: true });
       }
 
@@ -503,11 +815,14 @@ export default {
       if (p === "/sites" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const { name, url, owned } = await req.json();
+        const apiOrigin = url.origin; // capture before `url` below shadows this with the site's URL string
+        const { name, url: siteUrl, owned } = await req.json();
         if (!name) return json({ error: "name required" }, 400);
         const sites = await getSites(env);
-        sites.push({ id: rid("st_"), name, url: url || "", owned: !!owned, ts: now() });
+        const site = { id: rid("st_"), name, url: siteUrl || "", owned: !!owned, ts: now() };
+        sites.push(site);
         await kvPut(env, "sites", sites);
+        await createLinksForNewSite(env, site, apiOrigin);
         return json({ ok: true });
       }
       if (p === "/sites/remove" && req.method === "POST") {
@@ -579,22 +894,110 @@ export default {
         return json({ ok: true, balance: w.balance, pending: w.pending });
       }
 
-      /* ---- admin: pay a worker (full settle -> 0; logs + emails; Wise is off-app) ---- */
+      /* ---- admin: START a payout -> "processing" (no money moved, no email).
+         Snapshots the banked amount; balance stays put so it's still correct
+         if the worker earns more before the transfer is confirmed. ---- */
       if (p === "/pay" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
         const { workerId } = await req.json();
         const w = await kvGet(env, "worker:" + workerId);
         if (!w || (w.balance || 0) <= 0) return json({ error: "nothing_to_pay" }, 400);
-        const amount = w.balance; // banked (multiple of ₱100); the needle remainder stays
+        if (w.payState === "processing") return json({ error: "already_processing" }, 409);
+        if (w.payState === "cash_armed") return json({ error: "cash_armed" }, 409);
+        w.payState = "processing"; w.payPending = w.balance; w.payTs = now();
+        await saveWorker(env, w);
+        return json({ ok: true, status: "processing", amount: w.payPending });
+      }
+
+      /* ---- admin: CONFIRM the Wise transfer was sent -> "paid" + email ---- */
+      if (p === "/pay/confirm" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        if (w.payState !== "processing") return json({ error: "not_processing" }, 409);
+        const amount = w.payPending || 0; // banked snapshot taken at /pay (multiple of ₱100)
+        if (amount <= 0) { w.payState = ""; w.payPending = 0; await saveWorker(env, w); return json({ error: "nothing_to_pay" }, 400); }
         const payments = (await kvGet(env, "payments")) || [];
-        payments.push({ workerId, amount, ts: now() });
+        payments.push({ workerId, amount, ts: now(), method: "online", confirmedBy: "admin" });
         await kvPut(env, "payments", payments);
-        w.paidTotal = (w.paidTotal || 0) + amount; w.balance = 0; w.payoutReq = false;
+        w.paidTotal = (w.paidTotal || 0) + amount;
+        w.balance = Math.max(0, (w.balance || 0) - amount); // keeps anything earned while processing
+        w.payState = "paid"; w.payPending = 0; w.payoutReq = false;
         await saveWorker(env, w);
         await sendEmail(env, w.email, "Payment sent",
-          `Hi ${w.name}, ₱${amount} has been settled and is on its way via Wise. Your progress toward the next ₱100 stays. Thank you.`);
+          `Hi ${w.name}, ₱${amount} has been sent via Wise and is on its way. Your progress toward the next ₱100 stays. Thank you.`);
         return json({ ok: true, paid: amount });
+      }
+
+      /* ---- CASH TRACK (face-to-face) -------------------------------------
+         Two presences, two acts. Admin ARMS the button standing in front of
+         the worker (that is the in-person half). The worker's single press
+         FINALISES it and zeroes the balance (that is their half). Neither
+         alone completes the payment.
+         Until armed, payState is not "cash_armed", so /me/cash-received
+         returns 409 and the button does nothing however often it is pressed. */
+      if (p === "/pay/cash/arm" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        if ((w.balance || 0) <= 0) return json({ error: "nothing_to_pay" }, 400);
+        if (w.payState === "processing") return json({ error: "already_processing" }, 409);
+        // idempotent: arming an already-armed worker just re-reports the snapshot
+        if (w.payState !== "cash_armed") { w.payPending = w.balance; w.payTs = now(); w.payState = "cash_armed"; await saveWorker(env, w); }
+        return json({ ok: true, status: "cash_armed", amount: w.payPending });
+      }
+
+      /* ---- admin: DISARM (handover aborted, worker walked off, wrong person) ---- */
+      if (p === "/pay/cash/disarm" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        if (w.payState !== "cash_armed") return json({ error: "not_armed" }, 409);
+        w.payState = ""; w.payPending = 0;
+        await saveWorker(env, w);
+        return json({ ok: true, status: "disarmed" });
+      }
+
+      /* ---- worker: "Received ₱X in cash" — the finalising press ---- */
+      if (p === "/me/cash-received" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "worker") return json({ error: "unauthorized" }, 401);
+        const w = await kvGet(env, "worker:" + s.workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        // Not armed = dead button. Covers idle taps, curious taps, and any
+        // second press after the first one already settled it.
+        if (w.payState !== "cash_armed") return json({ error: "not_armed" }, 409);
+        const amount = w.payPending || 0;
+        if (amount <= 0) { w.payState = ""; w.payPending = 0; await saveWorker(env, w); return json({ error: "nothing_to_pay" }, 400); }
+        const payments = (await kvGet(env, "payments")) || [];
+        payments.push({ workerId: w.id, amount, ts: now(), method: "cash",
+          confirmedBy: "worker", ip: req.headers.get("cf-connecting-ip") || "" });
+        await kvPut(env, "payments", payments);
+        w.paidTotal = (w.paidTotal || 0) + amount;
+        w.balance = Math.max(0, (w.balance || 0) - amount); // exact snapshot — anything earned mid-handover survives
+        w.payState = "paid"; w.payPending = 0; w.payoutReq = false;
+        await saveWorker(env, w);
+        return json({ ok: true, paid: amount });
+      }
+
+      /* ---- admin: CANCEL a pending payout (Wise not sent) -> back to unpaid ---- */
+      if (p === "/pay/cancel" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { workerId } = await req.json();
+        const w = await kvGet(env, "worker:" + workerId);
+        if (!w) return json({ error: "no_worker" }, 404);
+        if (w.payState !== "processing") return json({ error: "not_processing" }, 409);
+        w.payState = ""; w.payPending = 0;
+        await saveWorker(env, w);
+        return json({ ok: true, status: "cancelled" });
       }
 
       /* ---- Stripe webhook: completed purchase -> +₱70 to the gate owner ----
@@ -712,6 +1115,10 @@ export default {
         if (!w) return json({ error: "no_gate" }, 404);
         // visitor geo forwarded by the site (optional); enables city-cluster warn/ban
         const geo = body.geo || { country: body.country, region: body.region, city: body.city };
+        // which site / which channel — tallied on w, persisted by countDust's save
+        const bucket = siteBucket(await getSites(env), body.site, req.headers.get("cf-connecting-ip"));
+        w.clicksBySite = tally(w.clicksBySite, bucket, 1);
+        if (body.src) w.clicksBySrc = tally(w.clicksBySrc, String(body.src).trim().slice(0, 32), 1);
         await countDust(env, w, geo);
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
@@ -730,6 +1137,11 @@ export default {
             const w = await workerByGate(env, code);
             if (w) {
               const cf = req.cf || {};
+              // destination is right there in the link — exact site, no guessing
+              const hit = (await getSites(env)).find((x) => hostOf(x.url) === hostOf(dest));
+              w.clicksBySite = tally(w.clicksBySite, hit ? hit.id : (dest ? "url:" + hostOf(dest) : "unknown"), 1);
+              const src = url.searchParams.get("s1") || url.searchParams.get("src") || "";
+              if (src) w.clicksBySrc = tally(w.clicksBySrc, src.trim().slice(0, 32), 1);
               await countDust(env, w, { country: cf.country, region: cf.region, city: cf.city });
             }
           }
@@ -765,7 +1177,16 @@ export default {
     }
     await kvPut(env, "idx:pending", keep);
 
-    // (2) Add-only reconcile — TODO when the in-house click method exists: pull its
+    // (2) Provisional sweep: accounts created from a job application that
+    //     were never activated (no code login) within 72h vanish — together
+    //     with their application row. One press; a fresh application later
+    //     recreates cleanly.
+    const allW = await listWorkers(env);
+    for (const w of allW) {
+      if (w.provTs && (t - w.provTs) > PROV_TTL_MS) await removeWorkerEverywhere(env, w.id);
+    }
+
+    // (3) Add-only reconcile — TODO when the in-house click method exists: pull its
     //     totals, compare to a stored "totals:<gate>" snapshot, credit ONLY positive
     //     deltas (never subtract). Balance stays monotonic.
     return;
