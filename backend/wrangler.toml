@@ -53,12 +53,12 @@ id = "7351968bf87d41979df8a0ebe99cabc7"
 [triggers]
 crons = ["0 3 * * *"]
 
-# Optional non-secret defaults (uncomment to override the code defaults):
-# [vars]
+# Non-secret defaults (uncomment a line to override the code default):
+[vars]
+API_ORIGIN = "https://go.veliane.org"
 # HOLD_DAYS = "3"
 # ACTIVE_WINDOW_DAYS = "2"
 # RL_EMAIL_PER_HOUR = "7"
 # RL_IP_PER_HOUR = "15"
 # CLUSTER_WARN = "2000"
 # CLUSTER_BAN = "4000"
-# API_ORIGIN = "https://go.veliane.org"
