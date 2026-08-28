@@ -24,6 +24,13 @@
 #      RL_IP_PER_HOUR         /auth/request code requests per IP per hour (default 15)
 #      CLUSTER_WARN           city-cluster clicks that flag a WARN (default 2000)
 #      CLUSTER_BAN            city-cluster clicks that AUTO-BAN (default 4000)
+#      API_ORIGIN             public origin every /go/ link is built on (default =
+#                             this Worker's workers.dev URL). Set it to a branded
+#                             domain such as https://go.veliane.org ONLY AFTER that
+#                             domain is attached to this Worker (Cloudflare dashboard
+#                             -> marketing-foundation -> Settings -> Domains & Routes).
+#                             Existing auto-filled /go/ links re-point themselves on
+#                             the next board load / worker login / daily cron.
 #
 # FRAUD DETECTION = CITY-CLUSTER (LIVE): clicks tallied per coarse geo
 # (country|region|city). Spread across many cities -> never flagged.
@@ -54,3 +61,4 @@ crons = ["0 3 * * *"]
 # RL_IP_PER_HOUR = "15"
 # CLUSTER_WARN = "2000"
 # CLUSTER_BAN = "4000"
+# API_ORIGIN = "https://go.veliane.org"

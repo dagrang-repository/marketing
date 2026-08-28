@@ -169,13 +169,23 @@ function buildTrackingLinkSrv(baseUrl, gate, owned, apiOrigin) {
 /* The Worker's own public origin — used to build /go/ links when there is no
    incoming request to read it from (i.e. the cron). */
 const API_ORIGIN_FALLBACK = "https://marketing-foundation.dagrang.workers.dev";
+/* The ONE public origin every /go/ link is built on. Set API_ORIGIN in
+   wrangler.toml [vars] (e.g. https://go.veliane.org) ONLY AFTER that custom
+   domain is attached to this Worker in the Cloudflare dashboard; until then
+   every path resolves to the workers.dev fallback, exactly as before. Never
+   read from the incoming request, so a preview/version hostname can never
+   leak into a stored link. */
+const apiOriginOf = (env) => String((env && env.API_ORIGIN) || API_ORIGIN_FALLBACK).replace(/\/$/, "");
 
 /* BACK-FILL: every worker × every registered site must have a link.
    createLinksForNewWorker/createLinksForNewSite only fire at CREATION time, so
    anyone who existed before a feature or a site shipped ended up with nothing.
    This closes that gap permanently. Pure function over arrays already in hand:
    add-only, idempotent, same dedup key as POST /links, and it reports how many
-   it added so the caller only writes KV when something was actually missing. */
+   it changed so the caller only writes KV when something actually moved.
+   Second pass: an AUTO-FILLED (source "") /go/ link for a TRACKED site whose
+   origin is no longer the canonical one is re-pointed (branded-domain move).
+   Owned /r/ links and hand-tagged links are never touched. */
 function backfillLinks(workers, sites, links, apiOrigin) {
   let added = 0;
   for (const w of workers || []) {
@@ -186,6 +196,16 @@ function backfillLinks(workers, sites, links, apiOrigin) {
         title: site.name || "", desc: "", source: "", status: "active", ts: now() });
       added++;
     }
+  }
+  const goPrefix = String(apiOrigin || "").replace(/\/$/, "") + "/go/";
+  for (const l of links || []) {
+    if ((l.source || "") !== "" || l.owned || !l.siteId) continue;
+    if (!/\/go\//.test(l.coded || "") || String(l.coded).startsWith(goPrefix)) continue;
+    const site = (sites || []).find((s) => s.id === l.siteId);
+    const w = (workers || []).find((x) => x.id === l.workerId);
+    if (!site || site.owned || !w) continue;
+    l.coded = buildTrackingLinkSrv(site.url, w.code, false, apiOrigin);
+    added++;
   }
   return added;
 }
@@ -331,8 +351,9 @@ function clusterKey(geo) {
    (clicks = ₱1 per 3); thresholds are lenient + tunable via CLUSTER_WARN / CLUSTER_BAN.
    Geo is coarse (city centroid): owned sites forward the visitor's geo in the body; the
    /go redirector reads it from request.cf. No geo present -> still counts, just unflagged. */
-async function countDust(env, w, geo) {
+async function countDust(env, w, geo, site) {
   if (w.banned) return w;                       // banned earns nothing, no tally
+  w.lastClick = { ts: now(), site: String(site || "").slice(0, 80) }; // admin: "is anyone clicking?"
   const key = clusterKey(geo);
   if (key) {
     w.geo = w.geo || {};
@@ -368,6 +389,28 @@ function siteBucket(sites, hint, ip) {
   return ip ? "ip:" + ip : "unknown";
 }
 function tally(obj, key, n) { const o = obj || {}; o[key] = (o[key] || 0) + (n || 1); return o; }
+/* Total unique clicks ever counted for a worker. Derived, never stored: every dust
+   path has always gone through addUniqueClicks, so points×3 + carry is exact for
+   the whole history — nothing to migrate, nothing that can drift. */
+const uniqueClicksOf = (w) => (w.clickPts || 0) * CLICKS_PER_POINT + (w.clickCarry || 0);
+/* 8-hex fingerprint of the browser string. /go dedups per IP + browser per day
+   (not IP alone): PH mobile carriers put many phones behind one public IP
+   (CGNAT) and a dorm/office shares one Wi-Fi, so IP-only collapsed real people
+   into 1 click. Farming is still bounded by dust value + the city-cluster ban. */
+async function uaHash(ua) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(ua || "")));
+  return [...new Uint8Array(buf)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+/* Per-site click counts with ip:… buckets folded through the admin's ipsite map —
+   the same resolution the admin card does, so a worker's per-link number matches. */
+function clicksPerSite(w, ipsite) {
+  const out = {};
+  for (const k of Object.keys(w.clicksBySite || {})) {
+    const key = k.startsWith("ip:") ? ((ipsite || {})[k.slice(3)] || "") : k;
+    if (key) out[key] = (out[key] || 0) + (w.clicksBySite[k] || 0);
+  }
+  return out;
+}
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { headers: cors() });
@@ -529,7 +572,7 @@ export default {
             confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
             note: "", banned: false, warned: false, payoutReq: false, provTs: now() };
           await saveWorker(env, w);
-          await createLinksForNewWorker(env, w, url.origin);
+          await createLinksForNewWorker(env, w, apiOriginOf(env));
         } else {
           w.currency = wccy; w.lang = wlang; w.name = wname;
           if (wcity) w.city = wcity;
@@ -569,10 +612,18 @@ export default {
         const payments = ((await kvGet(env, "payments")) || []).filter((x) => x.workerId === w.id).sort((a, b) => b.ts - a.ts);
         // self-heal here too: a worker opening their page before the admin
         // touches the board must still find their links waiting.
+        const sites = await getSites(env);
         const allLinks = await getLinks(env);
-        const filledMe = backfillLinks([w], await getSites(env), allLinks, url.origin);
+        const filledMe = backfillLinks([w], sites, allLinks, apiOriginOf(env));
         if (filledMe) await kvPut(env, "links", allLinks);
-        const myLinks = allLinks.filter((l) => l.workerId === w.id);
+        // per-link clicks + the site's "where to push it" text, resolved at render time
+        const perSite = clicksPerSite(w, (await kvGet(env, "ipsite")) || {});
+        const myLinks = allLinks.filter((l) => l.workerId === w.id).map((l) => {
+          const site = sites.find((s) => s.id === l.siteId) || null;
+          const n = l.siteId && perSite[l.siteId] != null ? perSite[l.siteId]
+                  : (perSite["url:" + hostOf(l.baseUrl || l.coded || "")] || 0);
+          return { ...l, desc: l.desc || (site && site.desc) || "", clicks: n };
+        });
         const allMsgs = (await kvGet(env, "messages")) || [];
         const messages = allMsgs
           .filter((m) => m.workerId == null || m.workerId === w.id)
@@ -584,6 +635,7 @@ export default {
           ccyLock: !!w.ccyLock,
           balance: w.balance || 0, pending: w.pending || 0,
           confirmed: w.confirmed || 0, clickPts: w.clickPts || 0,
+          clicks: uniqueClicksOf(w), clickCarry: w.clickCarry || 0,
           paidTotal: w.paidTotal || 0, rank, total: all.length,
           banned: !!w.banned, warned: !!w.warned, payoutReq: !!w.payoutReq,
           // payout state — the cash button is dead unless payState === "cash_armed"
@@ -685,7 +737,7 @@ export default {
         // only writes when something was genuinely missing.
         const sites = await getSites(env);
         const links = await getLinks(env);
-        const filled = backfillLinks(all, sites, links, url.origin);
+        const filled = backfillLinks(all, sites, links, apiOriginOf(env));
         if (filled) await kvPut(env, "links", links);
         return json({
           workers,
@@ -696,6 +748,7 @@ export default {
           payments: (await kvGet(env, "payments")) || [],
           applications: (await kvGet(env, "applications")) || [],
           ipsite: (await kvGet(env, "ipsite")) || {},
+          apiOrigin: apiOriginOf(env),
           fx: await getFx(env),
         });
       }
@@ -715,7 +768,7 @@ export default {
           confirmed: 0, balance: 0, pending: 0, clickCarry: 0, clickPts: 0, paidTotal: 0,
           note: "", banned: false, warned: false, payoutReq: false };
         await saveWorker(env, w);
-        await createLinksForNewWorker(env, w, url.origin);
+        await createLinksForNewWorker(env, w, apiOriginOf(env));
         return json({ ok: true, id: w.id, code: gate });
       }
 
@@ -857,15 +910,56 @@ export default {
       if (p === "/sites" && req.method === "POST") {
         const s = await requireSession(env, req);
         if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
-        const apiOrigin = url.origin; // capture before `url` below shadows this with the site's URL string
-        const { name, url: siteUrl, owned } = await req.json();
+        const apiOrigin = apiOriginOf(env);
+        const { name, url: siteUrl, owned, desc } = await req.json();
         if (!name) return json({ error: "name required" }, 400);
         const sites = await getSites(env);
-        const site = { id: rid("st_"), name, url: siteUrl || "", owned: !!owned, ts: now() };
+        const site = { id: rid("st_"), name, url: siteUrl || "", owned: !!owned, desc: String(desc || "").trim().slice(0, 300), ts: now() };
         sites.push(site);
         await kvPut(env, "sites", sites);
         await createLinksForNewSite(env, site, apiOrigin);
         return json({ ok: true });
+      }
+      /* ---- admin: the site's "where to push it" line, shown under that site's link
+             on every worker's page (resolved at render time — nothing to migrate) ---- */
+      if (p === "/sites/desc" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { id, desc } = await req.json();
+        const sites = await getSites(env);
+        const site = sites.find((x) => x.id === id);
+        if (!site) return json({ error: "no_site" }, 404);
+        site.desc = String(desc || "").trim().slice(0, 300);
+        await kvPut(env, "sites", sites);
+        return json({ ok: true });
+      }
+      /* ---- admin: flip a site owned <-> tracked IN PLACE. Same siteId, so click
+             history stays attributed; every auto-filled link for that site is rebuilt
+             (owned -> /r/CODE on the site, tracked -> /go/ on this Worker). A site
+             marked "owned" whose server never pings /owned/click counts nothing —
+             flipping it to tracked makes every click count from the next share. ---- */
+      if (p === "/sites/mode" && req.method === "POST") {
+        const s = await requireSession(env, req);
+        if (!s || s.role !== "admin") return json({ error: "unauthorized" }, 401);
+        const { id, owned } = await req.json();
+        const sites = await getSites(env);
+        const site = sites.find((x) => x.id === id);
+        if (!site) return json({ error: "no_site" }, 404);
+        site.owned = !!owned;
+        await kvPut(env, "sites", sites);
+        const workers = await listWorkers(env);
+        const links = await getLinks(env);
+        let changed = 0;
+        for (const l of links) {
+          if (l.siteId !== site.id || (l.source || "") !== "") continue;
+          const w = workers.find((x) => x.id === l.workerId);
+          if (!w) continue;
+          l.owned = site.owned; l.baseUrl = site.url;
+          l.coded = buildTrackingLinkSrv(site.url, w.code, site.owned, apiOriginOf(env));
+          changed++;
+        }
+        if (changed) await kvPut(env, "links", links);
+        return json({ ok: true, owned: site.owned, rebuilt: changed });
       }
       if (p === "/sites/remove" && req.method === "POST") {
         const s = await requireSession(env, req);
@@ -1137,7 +1231,7 @@ export default {
           await creditWorker(env, w, RESULT_VALUE, "result");
         } else if (event === "click" && unique) {
           const geo = body.geo || { country: body.country, region: body.region, city: body.city };
-          await countDust(env, w, geo);
+          await countDust(env, w, geo, body.site ? String(body.site) : "");
         }
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
@@ -1161,7 +1255,7 @@ export default {
         const bucket = siteBucket(await getSites(env), body.site, req.headers.get("cf-connecting-ip"));
         w.clicksBySite = tally(w.clicksBySite, bucket, 1);
         if (body.src) w.clicksBySrc = tally(w.clicksBySrc, String(body.src).trim().slice(0, 32), 1);
-        await countDust(env, w, geo);
+        await countDust(env, w, geo, bucket);
         return json({ ok: true, balance: w.balance, pending: w.pending, banned: !!w.banned, warned: !!w.warned });
       }
 
@@ -1175,16 +1269,18 @@ export default {
         if (code && !isBot) {
           const ip = req.headers.get("cf-connecting-ip") || "na";
           const day = new Date().toISOString().slice(0, 10);
-          if (!(await seen(env, "go:" + code + ":" + ip + ":" + day))) {
+          // one count per IP + browser per day (see uaHash) — shared Wi-Fi / CGNAT safe
+          if (!(await seen(env, "go:" + code + ":" + ip + ":" + (await uaHash(ua)) + ":" + day))) {
             const w = await workerByGate(env, code);
             if (w) {
               const cf = req.cf || {};
               // destination is right there in the link — exact site, no guessing
               const hit = (await getSites(env)).find((x) => hostOf(x.url) === hostOf(dest));
-              w.clicksBySite = tally(w.clicksBySite, hit ? hit.id : (dest ? "url:" + hostOf(dest) : "unknown"), 1);
+              const bucket = hit ? hit.id : (dest ? "url:" + hostOf(dest) : "unknown");
+              w.clicksBySite = tally(w.clicksBySite, bucket, 1);
               const src = url.searchParams.get("s1") || url.searchParams.get("src") || "";
               if (src) w.clicksBySrc = tally(w.clicksBySrc, src.trim().slice(0, 32), 1);
-              await countDust(env, w, { country: cf.country, region: cf.region, city: cf.city });
+              await countDust(env, w, { country: cf.country, region: cf.region, city: cf.city }, bucket);
             }
           }
         }
@@ -1234,7 +1330,7 @@ export default {
     const liveW = await listWorkers(env);
     const sitesC = await getSites(env);
     const linksC = await getLinks(env);
-    if (backfillLinks(liveW, sitesC, linksC, env.API_ORIGIN || API_ORIGIN_FALLBACK)) {
+    if (backfillLinks(liveW, sitesC, linksC, apiOriginOf(env))) {
       await kvPut(env, "links", linksC);
     }
 
