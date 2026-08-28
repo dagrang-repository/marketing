@@ -286,11 +286,14 @@
   .seg button:last-child{border-right:none}
   .seg button.on{background:var(--accent); color:var(--on-accent)}
   .brandwrap{display:flex; align-items:flex-end; gap:20px}
-  .ccy{padding-bottom:2px}
-  .ccy select{font-family:var(--mono); font-size:13px; font-weight:500; color:var(--ink);
-    background:var(--card); border:1px solid var(--line-strong); border-radius:8px;
-    padding:6px 8px; cursor:pointer; outline:none; max-width:120px}
-  .ccy select:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  /* pickers = icon tiles; the real <select> sits invisible on top so the native
+     picker still opens on tap. No text on the closed face — fits any phone width. */
+  .ccy{position:relative; padding-bottom:0}
+  .pick-face{display:flex; align-items:center; justify-content:center; width:42px; height:36px; border:1px solid var(--line-strong); border-radius:8px; background:var(--card); color:var(--ink); font-family:var(--mono); font-size:12.5px; font-weight:600; letter-spacing:.02em; pointer-events:none}
+  .pick-face svg{width:19px; height:19px; display:block}
+  .ccy select{position:absolute; inset:0; width:100%; height:100%; margin:0; padding:0; border:0; opacity:0; cursor:pointer; font-size:16px; outline:none}
+  .ccy:focus-within .pick-face{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .ccy.locked .pick-face{opacity:.55}
   .ccode{font-family:var(--mono); font-size:12.5px; color:var(--ink-soft); font-weight:400; margin-left:3px}
   .svc{display:flex; align-items:flex-start; gap:12px; padding:13px 2px; border-bottom:1px solid var(--line)}
   .svc:last-child{border-bottom:none}
@@ -415,7 +418,9 @@
   .srow input{flex:1; min-width:140px}
   .chk{display:flex; align-items:center; gap:8px; font-size:13px; margin:2px 0 10px; color:var(--ink-soft)}
   .chk input{width:16px; height:16px}
-  .sbadge{font-size:10.5px; border-radius:999px; padding:1px 8px; border:1px solid var(--line); margin-left:7px; white-space:nowrap; font-weight:500}
+  .sbadge{font-size:10.5px; border-radius:999px; padding:1px 8px; border:1px solid var(--line); margin-left:4px; white-space:nowrap; font-weight:500; display:inline-block; vertical-align:middle}
+  .siterow .srow{flex-wrap:nowrap}
+  .siterow .srow input{flex:1; min-width:0}
   .sbadge.own{color:var(--paid); border-color:var(--paid-soft); background:var(--paid-soft)}
   .sbadge.track{color:var(--ink-soft)}
   .lkstats{font-size:11.5px; color:var(--ink-soft); margin-top:4px}
@@ -510,10 +515,12 @@ function applyTheme(v){
   if(m){ const c=getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
     if(c) m.setAttribute("content", c); }
 }
+const ICON_GLOBE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>`;
+const ICON_PALETTE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.5-3.3 2 2 0 0 1 1.5-3.3H18a3 3 0 0 0 3-3A8.7 8.7 0 0 0 12 3z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>`;
 function themePicker(){
   const opts = Object.keys(THEME_NAMES).map(c=>
     `<option value="${c}" ${c===curTheme?'selected':''}>${THEME_NAMES[c]}</option>`).join("");
-  return `<div class="ccy"><select id="themePick" title="Theme">${opts}</select></div>`;
+  return `<div class="ccy"><span class="pick-face" aria-hidden="true">${ICON_PALETTE}</span><select id="themePick" title="Theme">${opts}</select></div>`;
 }
 function wireTheme(){
   const tp=document.getElementById("themePick"); if(!tp) return;
@@ -917,10 +924,10 @@ function currencyPicker(){
     const w = workerById(DB.session.workerId) || workerByEmail(DB.session.email);
     const locked = !!(w && w.ccyLock);
     // locked = the admin set it; show it greyed so it reads as enforced, not broken
-    return `<div class="ccy"><select id="ccyPick" data-scope="worker" ${locked?'disabled':''}
+    return `<div class="ccy ${locked?'locked':''}"><span class="pick-face" aria-hidden="true">${escapeHtml(wcur(w))}</span><select id="ccyPick" data-scope="worker" ${locked?'disabled':''}
       title="${locked ? escapeHtml(t('ccy_locked')) : t('ccy_title')}">${ccyOptions(wcur(w))}</select></div>`;
   }
-  return `<div class="ccy"><select id="ccyPick" data-scope="admin" title="Default currency for new workers">${ccyOptions(DB.config.currency)}</select></div>`;
+  return `<div class="ccy"><span class="pick-face" aria-hidden="true">${escapeHtml(DB.config.currency||"PHP")}</span><select id="ccyPick" data-scope="admin" title="Default currency for new workers">${ccyOptions(DB.config.currency)}</select></div>`;
 }
 function wireCcy(){
   const p=$("#ccyPick"); if(!p) return;
@@ -938,7 +945,7 @@ function wireCcy(){
 function langPicker(){
   if(DB.session && DB.session.role==="admin") return "";
   const opts = Object.keys(LANG).map(c=>`<option value="${c}" ${c===curLang?'selected':''}>${LANG_NAMES[c]||c}</option>`).join("");
-  return `<div class="ccy"><select id="langPick" title="${t('lang_title')}">${opts}</select></div>`;
+  return `<div class="ccy"><span class="pick-face" aria-hidden="true">${ICON_GLOBE}</span><select id="langPick" title="${t('lang_title')}">${opts}</select></div>`;
 }
 function wireLang(){
   const lp=$("#langPick"); if(!lp) return;
@@ -1211,7 +1218,9 @@ function personalNoteHtml(w){
 }
 
 /* ---------------- ADMIN ---------------- */
-let adminTab = "workers";
+const ADMIN_TABS = ["workers","inject","message","links","log","apply"];
+let adminTab = ADMIN_TABS.includes(localStorage.getItem("mf_admintab")) ? localStorage.getItem("mf_admintab") : "workers";
+function setTab(tab){ adminTab = ADMIN_TABS.includes(tab) ? tab : "workers"; localStorage.setItem("mf_admintab", adminTab); }
 
 function copySvc(url, btn){
   const done=()=>{ const t=btn.textContent; btn.textContent="Copied"; setTimeout(()=>btn.textContent=t,1100); };
@@ -1398,11 +1407,13 @@ function shareMsg(l){ return t("share_msg",{label:linkLabel(l),url:l.coded||""})
 function adminLinks(){
   const links = DB.links||[]; const sites = DB.sites||[];
   // --- registry list ---
-  const siteList = sites.length ? sites.map(s=>`<div class="svc">
-      <div class="si"><div class="sn">${escapeHtml(s.name)}<span class="sbadge ${s.owned?'own':'track'}">${s.owned?'owned · clean link':'tracked'}</span></div><div class="sd mono">${escapeHtml(s.url)}</div>
-        <div class="srow" style="margin:7px 0 0"><input data-sitdesc="${s.id}" value="${escapeHtml(s.desc||'')}" placeholder="Where to push it — shown under this link on every worker's page" autocomplete="off" style="flex:1;min-width:200px"><button class="btn sm ghost" data-sitdescsave="${s.id}">Save text</button></div>
+  const siteList = sites.length ? sites.map(s=>`<div class="svc siterow">
+      <div class="si">
+        <div class="sn">${escapeHtml(s.name)} <span class="sbadge ${s.owned?'own':'track'}">${s.owned?'owned · clean link':'tracked'}</span></div>
+        <div class="sd mono">${escapeHtml(s.url)}</div>
+        <div class="srow" style="margin:8px 0 0"><input data-sitdesc="${s.id}" value="${escapeHtml(s.desc||'')}" placeholder="Where to push it — shown under this link on every worker's page" autocomplete="off" style="flex:1;min-width:0"><button class="btn sm ghost" data-sitdescsave="${s.id}">Save text</button></div>
+        <div class="sa" style="margin-top:8px"><button data-sitmode="${s.id}" data-owned="${s.owned?1:0}">${s.owned?'Make tracked':'Make owned'}</button><button class="rm" data-sitrm="${s.id}">Remove</button></div>
       </div>
-      <div class="sa"><button data-sitmode="${s.id}" data-owned="${s.owned?1:0}">${s.owned?'Make tracked':'Make owned'}</button><button class="rm" data-sitrm="${s.id}">Remove</button></div>
     </div>`).join("") : `<div class="empty sm">No sites yet — add your first below.</div>`;
   // --- generate form options ---
   const sopts = sites.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}${s.owned?'':' (tracked)'}</option>`).join("") + `<option value="">— or paste a URL below —</option>`;
@@ -1730,7 +1741,7 @@ function adminWorkers(){
           ${w.payState==='processing'
             ? `<span class="wtag req">processing ${money(w.payPending||0, wc)}</span><button class="btn pay sm" data-payconfirm="${w.id}">Confirm sent</button><button class="btn sm" data-paycancel="${w.id}">Cancel</button>`
             : w.payState==='cash_armed'
-            ? `<span class="wtag req">cash armed ${money(w.payPending||0, wc)}</span><span class="conf" style="width:100%">Waiting for THEIR press on their phone.</span><button class="btn sm" data-cashdisarm="${w.id}">Disarm</button>`
+            ? `<span class="wtag req">cash armed ${money(w.payPending||0, wc)}</span><button class="btn pay sm" data-cashdisarm="${w.id}">Disarm cash</button><span class="conf" style="width:100%">Armed — their press settles it. Disarm cash switches it off.</span>`
             : `<button class="btn pay sm" data-pay="${w.id}" ${w.balance<=0?'disabled':''}>Pay online</button><button class="btn sm" data-casharm="${w.id}" ${w.balance<=0?'disabled':''}>Cash — arm</button>`}
           <button class="btn sm" data-warn="${w.id}">${w.warned?'Unwarn':'Warn'}</button>
           <button class="btn sm" data-ban="${w.id}">${w.banned?'Unban':'Ban'}</button>
@@ -1810,7 +1821,7 @@ function wireAdmin(){
   wireCcy();
   wireLinks();
   wireNotice();
-  document.querySelectorAll(".seg button").forEach(btn=> btn.onclick=()=>{ adminTab=btn.dataset.tab; render(); });
+  document.querySelectorAll(".seg button").forEach(btn=> btn.onclick=()=>{ setTab(btn.dataset.tab); render(); });
   document.querySelectorAll("[data-expand]").forEach(el=> el.onclick=()=>{ const id=el.dataset.expand; expandedW = (expandedW===id?null:id); render(); });
 
   // Add-worker ID photo: resize + stage
@@ -1887,7 +1898,7 @@ function wireAdmin(){
       body={ workerId:wid, type:"clicks", clicks };
     } else { body={ workerId:wid, type:v }; }
     di.disabled=true; const lbl=di.textContent; di.textContent="Adding…";
-    try{ await api("/inject","POST",body); adminTab="workers"; await refresh(); }catch(e){ di.disabled=false; di.textContent=lbl; alert("Couldn't add: "+e.message); }
+    try{ await api("/inject","POST",body); setTab("workers"); await refresh(); }catch(e){ di.disabled=false; di.textContent=lbl; alert("Couldn't add: "+e.message); }
   };
 
   // Warn / ban toggles + clear a payout request
@@ -1970,8 +1981,12 @@ function armCash(id, btn){
 }
 function disarmCash(id, btn){
   if(btn){ btn.disabled=true; btn.textContent="…"; }
-  api("/pay/cash/disarm","POST",{ workerId:id }).then(()=> setTimeout(refresh, 250))
-  .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent="Disarm"; } alert("Couldn't disarm: "+payErr(e)); refresh(); });
+  // second refresh covers a KV read that is still serving the pre-disarm value
+  api("/pay/cash/disarm","POST",{ workerId:id }).then(()=>{ setTimeout(refresh, 250); setTimeout(refresh, 1600); })
+  .catch(e=>{
+    if(e.message==="not_armed"){ refresh(); return; }           // already off — just redraw
+    if(btn){ btn.disabled=false; btn.textContent="Disarm cash"; } alert("Couldn't disarm: "+payErr(e)); refresh();
+  });
 }
 function cancelPay(id, btn){
   const w=workerById(id); if(!w) return;
