@@ -182,10 +182,7 @@ const apiOriginOf = (env) => String((env && env.API_ORIGIN) || API_ORIGIN_FALLBA
    anyone who existed before a feature or a site shipped ended up with nothing.
    This closes that gap permanently. Pure function over arrays already in hand:
    add-only, idempotent, same dedup key as POST /links, and it reports how many
-   it changed so the caller only writes KV when something actually moved.
-   Second pass: an AUTO-FILLED (source "") /go/ link for a TRACKED site whose
-   origin is no longer the canonical one is re-pointed (branded-domain move).
-   Owned /r/ links and hand-tagged links are never touched. */
+   it changed so the caller only writes KV when something actually moved. */
 function backfillLinks(workers, sites, links, apiOrigin) {
   let added = 0;
   for (const w of workers || []) {
@@ -197,16 +194,33 @@ function backfillLinks(workers, sites, links, apiOrigin) {
       added++;
     }
   }
-  const goPrefix = String(apiOrigin || "").replace(/\/$/, "") + "/go/";
+  /* Second pass — every AUTO link (source "") is kept in the exact form its site's
+     CURRENT mode dictates: owned -> https://site/r/CODE, tracked -> /go/ on the
+     canonical origin. Repairs any drift (mode flips, origin moves, two admin
+     presses racing on KV). Hand-tagged links, deep-page links and links to
+     unregistered sites are left alone. Runs on every board load / worker login /
+     cron, so the state can never stay wrong. */
+  const canon = new Set(); // rows confirmed to be the site-root auto link
   for (const l of links || []) {
-    if ((l.source || "") !== "" || l.owned || !l.siteId) continue;
-    if (!/\/go\//.test(l.coded || "") || String(l.coded).startsWith(goPrefix)) continue;
+    if ((l.source || "") !== "" || !l.siteId) continue;
     const site = (sites || []).find((s) => s.id === l.siteId);
     const w = (workers || []).find((x) => x.id === l.workerId);
-    if (!site || site.owned || !w) continue;
-    l.coded = buildTrackingLinkSrv(site.url, w.code, false, apiOrigin);
-    added++;
+    if (!site || !w) continue;
+    if (l.baseUrl && (hostOf(l.baseUrl) !== hostOf(site.url) || pathOf(l.baseUrl) !== pathOf(site.url))) continue;
+    canon.add(l);
+    const want = buildTrackingLinkSrv(site.url, w.code, !!site.owned, apiOrigin);
+    if (l.coded === want && !!l.owned === !!site.owned) continue;
+    l.coded = want; l.owned = !!site.owned; l.baseUrl = site.url; added++;
   }
+  /* Third pass — one site-root auto row per worker × site. Duplicates (two
+     backfills racing) are dropped, first one wins; identical after pass two. */
+  const seenKey = new Set(); const keep = []; let dropped = 0;
+  for (const l of links || []) {
+    const k = canon.has(l) ? l.workerId + "|" + l.siteId : null;
+    if (k) { if (seenKey.has(k)) { dropped++; continue; } seenKey.add(k); }
+    keep.push(l);
+  }
+  if (dropped) { links.length = 0; links.push(...keep); added += dropped; }
   return added;
 }
 
@@ -378,6 +392,11 @@ async function countDust(env, w, geo, site) {
 function hostOf(u) {
   try { return new URL(/^https?:\/\//i.test(u) ? u : "https://" + u).hostname.replace(/^www\./, "").toLowerCase(); }
   catch (e) { return String(u || "").trim().toLowerCase().replace(/^www\./, ""); }
+}
+/* path without trailing slash ("" for the root) — tells a site-root link from a deep-page one */
+function pathOf(u) {
+  try { return new URL(/^https?:\/\//i.test(u) ? u : "https://" + u).pathname.replace(/\/+$/, ""); }
+  catch (e) { return ""; }
 }
 function siteBucket(sites, hint, ip) {
   if (hint) {

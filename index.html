@@ -1491,7 +1491,9 @@ function wireLinks(){
   document.querySelectorAll("[data-sitmode]").forEach(b=> b.onclick = async ()=>{
     const toOwned = b.dataset.owned!=="1";
     if(toOwned && !confirm("Owned = links become https://site/r/CODE. They count only if that site's server pings the Worker. Continue?")) return;
-    try{ await api("/sites/mode","POST",{ id:b.dataset.sitmode, owned:toOwned }); await refresh(); }catch(e){ alert("Couldn't switch the site: "+e.message); }
+    document.querySelectorAll("[data-sitmode],[data-sitrm],[data-sitdescsave]").forEach(x=>x.disabled=true); // one press at a time
+    b.textContent="Switching…";
+    try{ await api("/sites/mode","POST",{ id:b.dataset.sitmode, owned:toOwned }); await refresh(); }catch(e){ alert("Couldn't switch the site: "+e.message); render(); }
   });
 
   // site picker -> prefill URL + title, toggle the paste field
